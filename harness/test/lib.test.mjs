@@ -138,8 +138,8 @@ test('status and spend are read from the run\'s JSONL', () => {
     'not json',
     '{"type":"workflow.result","data":{"name":"harness-ping","run":{"runId":"d4","attempt":1,"status":"completed"},"resultFile":"/tmp/r.json"}}',
   ].join('\n')
-  assert.deepEqual(readEvents(out), { status: 'completed', usage: { subagents: 3, aiCredits: 1.25, elapsedMs: 95000 } })
-  assert.deepEqual(readEvents(''), { status: null, usage: null })
+  assert.deepEqual(readEvents(out), { status: 'completed', usage: { subagents: 3, aiCredits: 1.25, elapsedMs: 95000 }, failures: [] })
+  assert.deepEqual(readEvents(''), { status: null, usage: null, failures: [] })
 })
 
 test('the agents\' environment carries no GitHub token, only Copilot\'s own', () => {
@@ -544,4 +544,18 @@ test('a key file that tries to leave its code span stays inside it, and odd spen
   assert.match(body, /- `a'b c` — w/)
   const odd = shipPrBody({ outcome: 'handback', issue: 7, reason: 'r', phase: 'p', open: [blocker({ file: 'x\n\ny' })], rounds: [], specRounds: [] })
   assert.match(odd, /`x y:40`/)
+})
+
+// The line Copilot CLI 1.0.103 printed when the account's quota was spent, on a real run.
+test('an agent that died of a quota says so in the hand-back', async () => {
+  const { readEvents, explain } = await import('../bin/run.mjs')
+  const out = [
+    '{"type":"session.error","data":{"errorType":"quota","message":"You have exceeded your monthly quota (Request ID: F76A:1)","statusCode":402,"errorCode":"quota_exceeded"}}',
+    '{"type":"workflow.run_settled","data":{"status":"completed","consumedSubagents":1,"consumedNanoAiu":0,"elapsedMs":511}}',
+  ].join('\n')
+  const { failures } = readEvents(out)
+  assert.deepEqual(failures, ['quota_exceeded: You have exceeded your monthly quota (Request ID: F76A:1)'])
+  const r = explain({ outcome: 'handback', phase: 'Setup', reason: 'the setup agent did not finish' }, failures)
+  assert.match(r.reason, /^the setup agent did not finish — Copilot reported: quota_exceeded: You have exceeded your monthly quota/)
+  assert.equal(explain({ outcome: 'pr' }, failures).reason, undefined)
 })

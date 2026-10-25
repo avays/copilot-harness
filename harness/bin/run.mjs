@@ -48,16 +48,30 @@ export function copilotArgv(config, workflow, argsFile, resultFile) {
  */
 export function readEvents(jsonl) {
   let status = null, usage = null
+  // Why agents failed, as Copilot said it: a quota or an auth error shows up
+  // only here, while the workflow sees just "the agent did not finish".
+  const failures = new Set()
   for (const line of String(jsonl).split('\n')) {
     let e
     try { e = JSON.parse(line) } catch { continue }
+    if (e.type === 'session.error' && e.data && e.data.message) failures.add(`${e.data.errorCode || e.data.errorType || 'error'}: ${e.data.message}`)
     if (e.type === 'workflow.run_settled' && e.data) {
       usage = { subagents: e.data.consumedSubagents ?? null, aiCredits: e.data.consumedNanoAiu != null ? e.data.consumedNanoAiu / 1e9 : null, elapsedMs: e.data.elapsedMs ?? null }
       status = e.data.status || status
     }
     if (e.type === 'workflow.result' && e.data && e.data.run) status = e.data.run.status || status
   }
-  return { status, usage }
+  return { status, usage, failures: [...failures] }
+}
+
+/**
+ * A result whose agents died says why, when Copilot said why: "the setup
+ * agent did not finish" alone sends a person looking in the wrong place.
+ */
+export function explain(result, failures) {
+  if (!failures.length || !result || result.outcome === 'pr') return result
+  const why = failures.slice(0, 3).join('; ')
+  return { ...result, agentErrors: failures, reason: `${result.reason || 'the run failed'} — Copilot reported: ${why}` }
 }
 
 // Tokens the agents must never see. Copilot signs in with
@@ -228,11 +242,11 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
       const secret = process.env.COPILOT_GITHUB_TOKEN
       writeFileSync(join(dir, 'stdout.jsonl'), secret ? out.split(secret).join('***') : out)
       if (timedOut) return done({ outcome: 'error', reason: `the run passed its timeout (${timeoutMinutes} minutes) and was stopped` })
-      const { status, usage } = readEvents(out)
+      const { status, usage, failures } = readEvents(out)
       // Exit 0 is the only case where the result file is this run's; a
       // failed run leaves any earlier file untouched.
-      if (code === 0 && existsSync(resultFile)) return done({ ...JSON.parse(readFileSync(resultFile, 'utf8')), usage })
-      done({ outcome: 'error', usage, reason: `copilot workflow run exited ${code}${status ? ` (${status})` : ''}` + (code === 2 ? ' — workflow not found or arguments invalid: is .github/extensions/harness/ in this checkout?' : '') })
+      if (code === 0 && existsSync(resultFile)) return done(explain({ ...JSON.parse(readFileSync(resultFile, 'utf8')), usage }, failures))
+      done(explain({ outcome: 'error', usage, reason: `copilot workflow run exited ${code}${status ? ` (${status})` : ''}` + (code === 2 ? ' — workflow not found or arguments invalid: is .github/extensions/harness/ in this checkout?' : '') }, failures))
     }
   })
 }

@@ -483,6 +483,7 @@ stops a healthy run after it has already spent the credits.
 | --- | --- | --- |
 | `copilot workflow run exited 2` | Copilot didn't find the workflow, or its arguments were invalid | `doctor --live`; check `.github/extensions/harness/` is on the default branch |
 | JSON-RPC `-32601`, `dynamic_workflows_unavailable` | the token's Copilot plan has no dynamic workflows | a plan with token-based billing, or a different token owner |
+| Hand-back: *… did not finish — Copilot reported: quota_exceeded* | the token owner's Copilot allowance is spent (HTTP 402) | wait for the reset, raise the budget, or use another token owner's seat |
 | Doctor: `paths.source matches tracked files` ✗ | the prefixes don't match the layout | write the module in: `app/src/main/` |
 | Issue: hand-back at *Spec Audit* | the spec couldn't be made clean, or the ticket contradicts itself | read the open findings on the issue; answer or edit the ticket, relabel |
 | Issue: *could not isolate the agents* | *Isolate the agents* failed closed on that runner image | read that step's log; adapt the step, don't delete it |
