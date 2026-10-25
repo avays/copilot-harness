@@ -103,7 +103,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Two checkouts. The root is the base branch: its harness is the one
+      # Two checkouts. The root is the default branch: its harness is the one
       # that runs, so agents' edits to harness/ on the branch never decide
       # the loop. The branch (or the base, for a first attempt) goes in the
       # workspace the agents edit, with every branch fetched — this job has
@@ -296,7 +296,7 @@ jobs:
       pull-requests: write
       actions: write # to start the review workflow once the pull request opens
     steps:
-      # The base branch, so the code that holds the token is the reviewed
+      # The default branch, so the code that holds the token is the reviewed
       # harness, not anything the agents wrote.
       - uses: actions/checkout@v4
         with:

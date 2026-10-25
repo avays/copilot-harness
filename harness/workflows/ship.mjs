@@ -76,7 +76,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   // What the loop did not prove, said plainly on the PR and on a draft alike:
   // "not verified" is where a reviewer looks first.
   const notVerified = (shipped) => [
-    ...(!(lastRed && lastRed.checked) ? [`no red-check ran — ${(lastRed && lastRed.reason) || 'the gate never went green'}`] : []),
+    ...(!(lastRed && lastRed.checked) ? [`no red-check ran — ${(lastRed && lastRed.reason) || (state.built ? 'the gate never went green' : 'nothing was built')}`] : []),
     // On a pull request the skeptic refuted it; on a draft it may be the
     // very thing still open, so it must not claim a verdict nobody gave.
     ...(lastRed && lastRed.checked && !lastRed.failedOnBase
@@ -181,12 +181,14 @@ export async function run(ctx, { config, deps = realDeps }) {
       return open.filter((f) => streak.get(key(f)) > STUCK_AFTER)
     }
   }
-  function settle(phase, open, stuck, { limit, rounds, fixes }) {
+  // `also`: findings fixed but never audited again (the last audit's, when
+  // this round only ran the gate), listed on the draft beside what stopped it.
+  function settle(phase, open, stuck, { limit, rounds, fixes, also = [] }) {
     if (open.some((f) => f.category === 'scope')) {
       return handBack(phase, 'the ticket itself is in question', open.filter((f) => f.category === 'scope'), open.filter((f) => f.category !== 'scope'))
     }
-    if (stuck.length) return handBack(phase, `the same finding survived ${STUCK_AFTER} ${fixes}`, open)
-    if (limit) return handBack(phase, `still not clean after ${rounds} rounds`, open)
+    if (stuck.length) return handBack(phase, `the same finding survived ${STUCK_AFTER} ${fixes}`, open, also)
+    if (limit) return handBack(phase, `still not clean after ${rounds} rounds`, open, also)
     return null
   }
 
@@ -245,6 +247,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   // No lens is no audit, and an audit nobody ran is not a clean one.
   if (!lenses.length) return handBack('Code Audit', `the ${T.size} tier names no code lens that exists — check tiers.${T.size}.codeLenses`)
   const codeStuck = streaks()
+  let lastAudit = []
   let audited = 0, redStreak = 0, gate = null, open = [], minors = []
 
   for (let round = 1; ; round++) {
@@ -308,7 +311,9 @@ export async function run(ctx, { config, deps = realDeps }) {
       }
     }
 
-    const stop = settle('Code Audit', open, codeStuck(open), { limit: audited >= T.buildRounds || round >= T.buildRounds + 2, rounds: round, fixes: 'fix attempts' })
+    const auditedRound = state.rounds.at(-1) && state.rounds.at(-1).audited
+    if (auditedRound) lastAudit = open
+    const stop = settle('Code Audit', open, codeStuck(open), { limit: audited >= T.buildRounds || round >= T.buildRounds + 2, rounds: round, fixes: 'fix attempts', also: auditedRound ? [] : lastAudit })
     if (stop) return stop
 
     const fixed = await ctx.agent(

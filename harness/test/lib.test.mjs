@@ -633,3 +633,41 @@ test('the spec link in a pull request cannot break out of its target', () => {
   assert.doesNotMatch(body, /\)@octocat/)
   assert.match(body, /specs\/a%29%40octocat-fixes%231%28\.md\)/)
 })
+
+test('a hand-back posted by a person\'s laptop run counts in Actions, a pasted one does not', async () => {
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  const c = (login, body, createdAt) => ({ author: { login }, body, createdAt })
+  const fromLaptop = c('alice', `404 or 410?\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`, '2026-10-01T10:30:00Z')
+  const writers = new Set(['alice', 'ana'])
+  const r = await answerSince([fromLaptop, c('ana', '410, please', '2026-10-01T11:00:00Z')], SHIP_MARKER, async (l) => writers.has(l), 'github-actions[bot]')
+  assert.match(r.answer, /410, please/)
+  const pasted = c('eve', `${SHIP_MARKER} outcome=handback claimed=2026-10-01T12:00:00Z -->`, '2026-10-01T12:30:00Z')
+  const r2 = await answerSince([fromLaptop, c('ana', '410, please', '2026-10-01T11:00:00Z'), pasted], SHIP_MARKER, async (l) => writers.has(l), 'github-actions[bot]')
+  assert.match(r2.answer, /410, please/)
+})
+
+test('Copilot\'s errors explain only a hand-back caused by an agent dying', async () => {
+  const { explain } = await import('../bin/run.mjs')
+  const f = ['quota_exceeded: over quota']
+  assert.match(explain({ outcome: 'handback', reason: 'the setup agent did not finish' }, f).reason, /Copilot reported/)
+  assert.doesNotMatch(explain({ outcome: 'handback', reason: 'still not clean after 2 rounds' }, f).reason, /Copilot reported/)
+  assert.doesNotMatch(explain({ outcome: 'declined', reason: 'asks for two things' }, f).reason, /Copilot reported/)
+})
+
+test('the ticket\'s own number in any form is not flagged as a stray closing keyword', async () => {
+  const { closingKeywords } = await import('../bin/run.mjs')
+  assert.deepEqual(closingKeywords('Fixes o/r#7\nCloses https://github.com/o/r/issues/7\nfixes #8', 7), ['#8'])
+})
+
+test('sizing boundaries: exactly 3 areas is broad, exactly 300 lines does not escalate', () => {
+  const c = config()
+  assert.deepEqual(profileFor({ ...smallFacts, areas: ['a', 'b', 'c'] }, c).codeLenses, ['criteria', 'rules'])
+  assert.equal(escalate(profileFor(smallFacts, c), { risky: [], appLines: 300 }, c), null)
+  assert.ok(escalate(profileFor(smallFacts, c), { risky: [], appLines: 301 }, c))
+})
+
+test('publish blames isolation only when isolation failed', async () => {
+  const { missingBuild } = await import('../bin/run.mjs')
+  assert.doesNotMatch(missingBuild({ BUILD_ISOLATED: 'skipped', BUILD_CLEAN: '' }), /survived|isolate/)
+})

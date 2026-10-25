@@ -9,7 +9,7 @@
 ## a branch prefix) if that is not what the team wants.
 ##
 ## As in ship, the job that runs agents is given no GitHub token, and every
-## job runs the base branch's harness: the pull request's tree is only what
+## job runs the pull request base's harness: the pull request's tree is only what
 ## the reviewers read. Pull requests from forks are never reviewed, because
 ## the reviewers run with this repository's Copilot token.
 name: "Harness · review"
@@ -265,7 +265,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      # The base branch's harness posts the comment, not the PR's.
+      # The base's harness posts the comment, not the PR's.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}

@@ -69,7 +69,9 @@ export function readEvents(jsonl) {
  * agent did not finish" alone sends a person looking in the wrong place.
  */
 export function explain(result, failures) {
-  if (!failures.length || !result || result.outcome === 'pr') return result
+  // Only where an agent's death is the reason: a retry that succeeded leaves
+  // an error in the stream that has nothing to do with a round limit.
+  if (!failures.length || !result || result.outcome === 'pr' || !/did not finish|could not finish|exited/.test(result.reason || '')) return result
   const why = failures.slice(0, 3).join('; ')
   return { ...result, agentErrors: failures, reason: `${result.reason || 'the run failed'} — Copilot reported: ${why}` }
 }
@@ -403,7 +405,9 @@ async function shipBuild(opt, root, config, state) {
 export function closingKeywords(log, own) {
   const found = new Set()
   for (const m of String(log).matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*((?:[\w.-]+\/[\w.-]+)?#\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+)/gi)) {
-    if (m[1] !== `#${own}`) found.add(m[1])
+    // The ticket's own number, in any of its forms, is meant to close.
+    const n = (/#(\d+)$/.exec(m[1]) || /\/issues\/(\d+)$/.exec(m[1]) || [])[1]
+    if (Number(n) !== Number(own)) found.add(m[1])
   }
   return [...found]
 }

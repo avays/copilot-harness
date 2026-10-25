@@ -89,7 +89,15 @@ export function lastHandBack(comments, marker, harness) {
  * matters: `canWrite(login)` decides, and the skipped authors are returned.
  */
 export async function answerSince(comments, marker, canWrite, harness = null) {
-  const back = lastHandBack(comments, marker, harness)
+  // A hand-back may come from this identity, or from a person's laptop run
+  // (a person with write access): a pasted marker from anyone else is text.
+  const trusted = []
+  for (const c of comments) {
+    const login = c.author && c.author.login
+    if (String(c.body || '').includes(marker) && harness && !sameLogin(login, harness) && !(login && (await canWrite(login, c)))) continue
+    trusted.push(c)
+  }
+  const back = lastHandBack(trusted, marker, null)
   if (!back) return { answer: '', skipped: [] }
   const kept = [], skipped = new Set()
   for (const c of back.after) {

@@ -26,7 +26,7 @@ reads them; it never replaces or restates them.
 
 If the build needs a running JBoss or WildFly (Arquillian, for example), sort that out first. Either the
 gate runs the tests that don't need a server, or the job starts one. A gate that can't run is a ticket
-handed back on its first round.
+handed back after a few red rounds, its fix attempts spent (and a fixer may try editing build files to get past it).
 
 ## 2. Copy the files in
 
@@ -279,7 +279,7 @@ built. Because the spec decides what gets built, `spec` defaults to `strong` on 
 | `review.depth` | `fast` sizes reviews one step down, `thorough` always large | `normal` |
 | `review.tinyLines`, `review.smallLines` | changed lines (source and tests) up to which a review is tiny, then small | 30, 300 |
 | `review.timeoutMinutes` | the review's Copilot run; keep it below the review job's 45 | 35 |
-| `copilot.allowTools` | what agents may run. **Anything the gate, `quick` or `testsOnly` calls must be here** (`shell(./gradlew:*)`, `shell(java:*)`), or agents are denied it headless | as shipped in `harness.config.mjs`: Maven, git and read-only shell tools. Removed, it falls back to read, write and git only |
+| `copilot.allowTools` | what agents may run. **Anything the gate, `quick` or `testsOnly` calls must be here** (`shell(./gradlew:*)`, `shell(java:*)`), or agents are denied it headless | as shipped in `harness.config.mjs`: Maven, git and shell tools for reading and editing files (`sed`, `find` can write). Removed, it falls back to read, write and git only |
 | `copilot.denyTools` | always refused, over any allow | `git push`, `gh` |
 | `copilot.flags` | options before `workflow run` | `--experimental` |
 | `copilot.timeoutMinutes` | the whole ship run; below the build job's 120 | 100 |
@@ -302,6 +302,8 @@ their own config, so a failure here means you've changed the harness itself.
 - Some write-ups describe running on the built-in `GITHUB_TOKEN` with a `copilot-requests: write`
   permission when the org enables "Copilot CLI billed to the organization". This hasn't been tried
   here. Test it on a branch before you rely on it.
+- With a `HARNESS_GH_TOKEN`, doctor can't see the repository secret: run it as `HARNESS_USES_PAT=true node
+  harness/bin/doctor.mjs` to skip the Actions-may-create-PRs check.
 - Without a `HARNESS_GH_TOKEN`, go to *Settings → Actions → General* and turn on **Allow GitHub Actions to
   create and approve pull requests**. Many organisations have it off by default, and without it the run
   fails at the very end, after the credits are spent. Doctor checks it when it can read the setting
@@ -360,7 +362,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 161 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 169 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -419,8 +421,8 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   live on CLI 1.0.103: with your trust linked in, the workspace's extension loaded; staged, it did not).
   So agents' edits to `harness/` or `harness.config.mjs` on a branch can't change the loop, the limits
   or the gate *command* of a later run. The gate does run the branch's own build files (`mvnw`, `.mvn/`,
-  `pom.xml`), so a change there changes what the gate checks: keep them in `paths.risky` (the default
-  does), so that such a change brings in the full auditors. The staged home also keeps the run's own sessions, logs and settings, so a run
+  `pom.xml`), so a change there changes what the gate checks: keep them in `paths.risky` (the shipped `harness.config.mjs` does; the built-in fallback
+  doesn't, so keep them if you rewrite `paths`), so that such a change brings in the full auditors. The staged home also keeps the run's own sessions, logs and settings, so a run
   leaves nothing in your `~/.copilot` (it used to switch experimental mode on there).
 - **In Actions, the agents run as a user of their own.** The build job creates an unprivileged
   `harness-agent` user. It copies the trusted checkout to `/srv/harness/root`, owned by root and read-only
@@ -436,7 +438,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   that user is killed at once (`kill -9 -1` as that user), and again in an `always()` step, which
   fails, and skips the copy below, if any survives. Nothing they scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
   regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
-  can't make the upload read the runner's own environment. Then it masks the Copilot token in every file
+  can't make the upload read the runner's own environment. Then it masks literal occurrences of the Copilot token (and anything named in `HARNESS_MASK`) in every text file
   of that copy, as the job log masks it. The uploads read that copy. *Isolate the agents* also takes group
   and world write off every folder on `PATH`, their contents and their parents — the hosted image ships
   `/usr/local/bin` and the tool cache under `/opt` world-writable — and fails if the agents' user can
@@ -519,5 +521,5 @@ definitions (`doctor --live` fails if registration does), and the workflow files
 - [ ] `COPILOT_GITHUB_TOKEN` secret, with Copilot Requests and no repository access (§6)
 - [ ] `paths` are prefixes from the repository root, and doctor finds files under them (§4)
 - [ ] Without a `HARNESS_GH_TOKEN`: Actions may create pull requests (§6)
-- [ ] `doctor` and `doctor --live` green; the harness merged into `base`; *Harness · setup* green (§7)
+- [ ] `doctor` and `doctor --live` green; the harness merged into the default branch (and `base`); *Harness · setup* green (§7)
 - [ ] One small ticket shipped locally with `--no-publish`, then in CI (§7)

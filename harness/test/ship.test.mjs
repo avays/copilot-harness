@@ -650,3 +650,22 @@ test('a full spec writer is told to remove setup\'s draft at another path', asyn
   await run(ctx, { config: config(), deps: deps() })
   assert.match(ctx.calls.find((c) => c.label === 'write-spec').prompt, /draft spec at specs\/7-other\.md: delete it/)
 })
+
+test('a round limit hit on a red round keeps the last audit\'s fixed-but-unaudited findings', async () => {
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:': () => (++n <= 2 ? { ...clean, findings: [blocker({ claim: 'X' })] } : clean) }))
+  const reds = [1, 2, 3, 4, 5].map((i) => red({ failedTests: [{ test: `T#${i}`, error: 'e' }] }))
+  const r = await run(ctx, { config: config({ tiers: { full: { buildRounds: 2, specRounds: 4 } } }), deps: deps({ gates: [green(), ...reds] }) })
+  assert.equal(r.outcome, 'handback')
+  assert.ok(r.alsoOpen.some((f) => f.claim === 'X'), JSON.stringify(r.alsoOpen))
+})
+
+test('a hand-back before anything is built says so in Not verified', async () => {
+  const r = await run(fakeCtx(SHIP_ARGS, script({ 'spec-audit:': { ...clean, findings: [blocker({ category: 'scope', file: 'specs/7-x.md', line: 1 })] } })), { config: config(), deps: deps() })
+  assert.deepEqual(r.notVerified, ['no red-check ran — nothing was built'])
+})
+
+test('a dead auditor after a conflict does not list the conflict as unresolved', async () => {
+  const r = await run(fakeCtx(SHIP_ARGS, script({ 'audit:': undefined })), { config: config(), deps: deps({ syncs: [{ sync: 'conflict', conflicts: ['pom.xml'] }] }) })
+  assert.deepEqual(r.alsoOpen, [])
+})

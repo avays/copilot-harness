@@ -237,12 +237,12 @@ because everything is `.mjs` with no dependencies.
 | `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md` | Kept as they are. Every agent is told to read them first, and the rules auditors judge each spec and diff against them | List them in `instructions` (§3). Don't move or rewrite them for the harness |
 | Rules in a wiki, Confluence or people's heads | Agents can't see them, and the audits can't enforce them | Write the ones that matter into a file in the repo and list it |
 | A Maven build (`./mvnw verify`), maybe multi-module | Becomes the **gate**: the definition of green, run every round | Set `commands.gate`. Gate only the Spring Boot module if the legacy build is slow or needs a server (§4) |
-| Arquillian or tests that need a running JBoss/WildFly | The gate runs on a clean Ubuntu runner, as an unprivileged user | Gate the tests that don't need a server, or start one before isolation. A gate that can't run means every ticket hands back on its first code round |
+| Arquillian or tests that need a running JBoss/WildFly | The gate runs on a clean Ubuntu runner, as an unprivileged user | Gate the tests that don't need a server, or start one before isolation. A gate that can't run spends two or three fix rounds (a fixer may even try editing build files) before the ticket hands back |
 | Testcontainers / Docker in tests | Docker is **off** in the agents' job, because Docker access is root | Make three edits to re-enable it (ADAPTING §2), and accept that the isolation boundary is gone for those jobs |
 | A private Maven repository | The build job needs its credential, and **the agents can read it** | Use a read-only package token; add it to the build step's env, `--preserve-env` and the artifact masking (ADAPTING §4) |
-| Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push or re-run CI on each harness PR. Decide this up front |
+| Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
-| Required signed commits | Harness commits are **unsigned** (`harness[bot]`), so its PRs can't merge | Exempt `harness/*` branches, or have a person squash-merge with a signed commit |
+| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds, and merge harness PRs by squash or rebase in GitHub, which signs the result |
 | A commit message convention | Agents follow the project's instructions for commit messages | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
@@ -259,7 +259,7 @@ Agree these before the first ticket. Each one is a setting or a sentence in the 
 | --- | --- | --- |
 | Who may label `ready-for-ai`? | anyone with triage access (default) / a smaller group | GitHub roles; ticket bodies are the agents' brief, so keep this to people who'd review the result |
 | Does the harness review **every** PR, or only its own? | every ready PR (default) / harness branches only / a label | `on:` in `harness-review.yml`. Every review costs credits |
-| How do harness PRs get CI? | `HARNESS_GH_TOKEN` PAT / a person re-runs CI | [step 5](#5-set-the-secrets-and-settings), and the CI row above |
+| How do harness PRs get CI? | `HARNESS_GH_TOKEN` PAT / a person pushes or reopens | [step 5](#5-set-the-secrets-and-settings), and the CI row above |
 | Which rules are *business rules* and which data is *stored data*? | name them | `sizing.rule`, `sizing.data` in `harness.config.mjs` |
 | What is expensive to get wrong? | migrations, security config, `persistence.xml`, shared legacy code | `paths.risky` |
 | Which migration decisions are fixed? | EJB → `@Service`, transaction semantics, JNDI → config, JAX-RS vs Spring MVC, security domains | a file listed in `instructions` |
@@ -356,7 +356,7 @@ Details: [ADAPTING §6](harness/ADAPTING.md#6-tokens-and-repository-settings).
 
 | Step | Command | Proves | Costs |
 | --- | --- | --- | --- |
-| 1 | `node --test harness/test/*.test.mjs` | the harness's own logic, after your config changes | nothing |
+| 1 | `node --test harness/test/*.test.mjs` | the harness's own logic (the tests use their own config; doctor checks yours) | nothing |
 | 2 | `node harness/bin/doctor.mjs` | config, paths, gate command, labels, settings | nothing |
 | 3 | `node harness/bin/doctor.mjs --live` | Copilot loads the staged harness and runs a workflow | 0 credits |
 | 4 | merge the adoption branch to the default branch, and into `base` if that's different | the workflows can trigger (GitHub runs them from the default branch; pull-request reviews need them on `base` too) | nothing |
@@ -400,10 +400,12 @@ unprotected. Adapt that step if it fails; don't delete it.
 
 - **Harness PRs show no CI.** That's the `GITHUB_TOKEN` rule above, not a failure.
 - **The harness review comments on people's PRs too.** That's the default; narrow `on:` if unwanted.
+- **The adoption PR itself shows a red *Harness · review*.** Its base has no harness yet, so the review's
+  first job can't start. Expected once; merge it.
 - **A ticket hands back from the spec audit without any code.** By design: the ticket is ambiguous, or
   its spec couldn't be made to satisfy the auditors. The issue comment lists what is open; answer it
   and relabel.
-- **A ticket hands back on its first code round with a red gate.** The gate couldn't run on the runner:
+- **A ticket hands back after a few red gates, its fixes going nowhere.** The gate couldn't run on the runner:
   a JDK mismatch, a missing prerequisite, Docker, or a private repository. The run artifact has the
   output.
 - **"could not isolate the agents"** on the issue. The *Isolate the agents* step found something it
@@ -500,10 +502,10 @@ stops a healthy run after it has already spent the credits.
 | Issue: hand-back at *Spec Audit* | the spec couldn't be made clean, or the ticket contradicts itself | read the open findings on the issue; answer or edit the ticket, relabel |
 | Issue: *could not isolate the agents* | *Isolate the agents* failed closed on that runner image | read that step's log; adapt the step, don't delete it |
 | Issue: *the build job did not finish* | a setup step failed, a timeout, a cancellation or a lost runner | the build job's log |
-| Red gate on the first code round, every ticket | the gate can't run on the runner | JDK, prerequisites, Docker, private repository (§2, §4) |
+| Every ticket hands back after repeated red gates | the gate can't run on the runner | JDK, prerequisites, Docker, private repository (§2, §4) |
 | `refusing to allow a GitHub App to create or update workflow` | a continued branch carries base workflow changes | delete the old harness branch, or merge the base into it, then relabel |
 | A hand-back answer was ignored | the commenter lacks write access, or the token can't check | the claim job's log names who was skipped |
-| No CI on a harness PR | PRs opened with `GITHUB_TOKEN` don't trigger workflows | a PAT, or re-run CI by hand (see [above](#where-it-meets-what-the-team-already-has)) |
+| No CI on a harness PR | PRs opened with `GITHUB_TOKEN` don't trigger workflows, so there is no run to re-run | a PAT, or push a commit / reopen the PR (see [above](#where-it-meets-what-the-team-already-has)) |
 | Review shows *unproven* | a lens didn't finish; confidence is coverage | the review artifact; re-run the review |
 
 ---
@@ -514,7 +516,7 @@ Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The
 1.0.103, and `--experimental` is required.
 
 **Proven:**
-- **The loop logic:** 161 tests against a fake Copilot context and real git repositories.
+- **The loop logic:** 169 tests against a fake Copilot context and real git repositories.
 - **Loading and running headless:** Copilot CLI loads the staged harness headless and runs a workflow
   (`doctor --live`).
 - **The workflow files** pass actionlint.
