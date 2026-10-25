@@ -137,7 +137,9 @@ const words = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').t
 
 // Where a finding is, not how it is worded: a fresh auditor rewords the same
 // problem every round, so a key built from the claim would never repeat.
-export const key = (f) => `${f.category}|${f.file}|${f.line ? Math.floor(f.line / 10) : words(f.claim).slice(0, 60)}`
+// Not the category either: a fresh auditor may file the same problem under
+// another one, and it is still the same problem surviving another fix.
+export const key = (f) => `${f.file}|${f.line ? Math.floor(f.line / 10) : words(f.claim).slice(0, 60)}`
 
 // One problem, one finding, whichever lens filed it. The exact line, not a
 // window: two problems ten lines apart are two findings.

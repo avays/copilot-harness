@@ -48,7 +48,7 @@ Three workflows, all triggered from GitHub:
 | Workflow | Starts when | What it produces |
 | --- | --- | --- |
 | **Harness · ship** | an issue is labelled `ready-for-ai` (or dispatched by hand) | a pull request labelled `ready-for-human`, or a **draft** labelled `needs-human` with the reason and every open finding |
-| **Harness · review** | a pull request is opened, marked ready or reopened (and after every ship) | one advisory comment: a verdict, a *confidence* that means coverage, the confirmed blockers and notes |
+| **Harness · review** | a pull request is opened, marked ready or reopened (and after every ship that opens one) | one advisory comment: a verdict, a *confidence* that means coverage, the confirmed blockers and notes |
 | **Harness · setup** | dispatched once, by hand | the labels, plus a no-cost check that Copilot can load the harness |
 
 What ends up on a harness pull request:
@@ -156,7 +156,7 @@ decides how many auditors, how many rounds and which models.
 | leaves 2+ design questions open | an extra spec round (3) | as its size |
 | changes a business rule, stored data or the harness, or is labelled `ship:full` (**full**) | its own spec writer; criteria and fit auditors, strong model, up to 4 rounds | criteria and rules auditors, strong model, up to 4 rounds |
 
-**The diff can escalate a small run.** Once the gate is green, a diff that reaches a risky path
+**The diff can escalate a small run.** Each round, a diff that reaches a risky path
 (`paths.risky`: `pom.xml`, `mvnw`, `.mvn/`, migrations, application config, `.github/`, the harness) or
 grows past 300 source lines gets the full loop's code auditors and thinking model. A gate red twice in a
 row moves the fixer to the strong model.
@@ -179,7 +179,7 @@ might go wrong, through a bad model or a prompt-injected ticket, and limits what
 | sudo, Docker | removed and verified before agents start (fails closed) | whatever you have |
 | The harness that runs | ship: the default branch's; review: the pull request base's; never the branch's | the checkout you run from |
 | Pushing | publish pushes a bundle; never anything under `.github/workflows/` or `.github/actions/` | `run.mjs` pushes; agents' git has no credential helper |
-| Agent text on GitHub | made inert: no closing keywords, no @mentions | the same |
+| Agent text on GitHub | the build's report (PR body, comments) made inert: no closing keywords, no @mentions. Commit messages are the agents' own; closing keywords in them are flagged at the top of the PR | the same |
 
 **What an agent that went wrong can still do in Actions:**
 - read the Copilot token and send it out, since its code has the network;
@@ -292,7 +292,8 @@ cp -r /tmp/copilot-harness/.github/extensions/harness .github/extensions/
 cp /tmp/copilot-harness/.github/workflows/harness-*.yml .github/workflows/
 grep -qxF '.harness/' .gitignore 2>/dev/null || echo '.harness/' >> .gitignore
 
-node harness/bin/doctor.mjs     # lists what is still to do
+npm install -g @github/copilot@1.0.103 && copilot login   # once, for doctor --live and local runs
+node harness/bin/doctor.mjs     # lists what is still to do; the labels ✗ clears after Harness · setup
 ```
 
 Then set **`base`** in `harness.config.mjs` to the branch work starts from and pull requests target. It
@@ -358,7 +359,7 @@ Details: [ADAPTING §6](harness/ADAPTING.md#6-tokens-and-repository-settings).
 | 1 | `node --test harness/test/*.test.mjs` | the harness's own logic, after your config changes | nothing |
 | 2 | `node harness/bin/doctor.mjs` | config, paths, gate command, labels, settings | nothing |
 | 3 | `node harness/bin/doctor.mjs --live` | Copilot loads the staged harness and runs a workflow | 0 credits |
-| 4 | merge the adoption branch to the default branch | the workflows can trigger (GitHub only runs them from there) | nothing |
+| 4 | merge the adoption branch to the default branch, and into `base` if that's different | the workflows can trigger (GitHub runs them from the default branch; pull-request reviews need them on `base` too) | nothing |
 | 5 | *Actions → Harness · setup → Run workflow* | labels, and step 3 on a runner | 0 credits |
 | 6 | `node harness/bin/run.mjs ship <n> --no-publish` on one tiny real ticket | a real run with agents, locally; nothing pushed or posted | a few credits |
 | 7 | label that ticket `ready-for-ai` | the three-job workflow, isolation and publishing on a real runner | a few credits |
@@ -446,11 +447,12 @@ copilot --experimental --allow-tool=read --allow-tool=write --allow-tool='shell(
 ## Configuration at a glance
 
 Everything is in `harness.config.mjs`. Anything left out falls back to `harness/lib/config.mjs`. The
-config is validated on load, so a typo fails at once rather than mid-run.
+config is validated on load (types, model slots, lens keys, rounds), so a wrong value fails at once
+rather than mid-run. An unknown key, such as a misspelt one, is ignored, and its default applies.
 
 | Key | What it is | Guide |
 | --- | --- | --- |
-| `base` | the branch work starts from and PRs target | §2 |
+| `base` | the branch work starts from and PRs target | §1 |
 | `instructions` | the team's own rule files, read by every agent | §3 |
 | `map` | where things live, in two or three sentences | §3 |
 | `paths.source`, `tests`, `risky`, `specs`, `lessons` | prefixes from the repository root | §4 |
@@ -512,7 +514,7 @@ Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The
 1.0.103, and `--experimental` is required.
 
 **Proven:**
-- **The loop logic:** 153 tests against a fake Copilot context and real git repositories.
+- **The loop logic:** 158 tests against a fake Copilot context and real git repositories.
 - **Loading and running headless:** Copilot CLI loads the staged harness headless and runs a workflow
   (`doctor --live`).
 - **The workflow files** pass actionlint.

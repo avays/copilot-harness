@@ -392,6 +392,15 @@ async function shipBuild(opt, root, config, state) {
   return result
 }
 
+/** Issue references a merge would close, other than the ticket's own, in commit messages. */
+export function closingKeywords(log, own) {
+  const found = new Set()
+  for (const m of String(log).matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*((?:[\w.-]+\/[\w.-]+)?#\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+)/gi)) {
+    if (m[1] !== `#${own}`) found.add(m[1])
+  }
+  return [...found]
+}
+
 /** Why publish has no build result, from what the build job reported. */
 export function missingBuild(env) {
   if (env.BUILD_ISOLATED === 'failure') return 'the build job could not isolate the agents (its "Isolate the agents" step failed closed), so no agent ran — its log says which check'
@@ -447,6 +456,10 @@ async function shipPublish(opt, root, config, state, built) {
   if (ahead > 0) {
     await must(['push', '-u', 'origin', `${ref}:refs/heads/${branch}`], cwd, 'git push')
     const draft = result.outcome !== 'pr'
+    // Agents write the commit messages, and those are not tamed: a merge would
+    // honour a "fixes #123" in them. Rewriting the agents' commits is not
+    // publish's job; saying so where the person merging will see it is.
+    result.closingCommits = closingKeywords(await must(['log', '--format=%B%x00', `origin/${base}..${ref}`], cwd, 'git log'), n)
     const body = shipPrBody(result)
     if (existing) {
       await GH.editPr(existing.number, body, root)

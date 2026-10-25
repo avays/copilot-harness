@@ -123,8 +123,13 @@ export async function run(ctx, { config, deps = realDeps }) {
   if (!Array.isArray(setup.doneWhen) || !setup.doneWhen.length) return handBack('Setup', 'setup found no Done-when criteria in the ticket')
 
   T = chooseProfile({ forced, facts: setup.sizing, config, labelledFull })
+  // The spec's model: writing, auditing, refuting and revising it. A tier that
+  // names no spec slot still gets the strong model.
+  const specSlot = () => T.spec || 'strong'
   // A spec setup wrote for a ticket that sized full is still a spec — but a
-  // full ticket gets its own spec writer on the strong model.
+  // full ticket gets its own spec writer on the strong model, which must
+  // not leave setup's draft behind under another name.
+  const draft = T.size !== 'small' && setup.spec && setup.spec.path && setup.spec.path !== specPath ? setup.spec.path : null
   if (T.size !== 'small') setup.spec = null
   state.size = T.size
   state.why = T.why
@@ -134,8 +139,9 @@ export async function run(ctx, { config, deps = realDeps }) {
   // ── 2. Spec ────────────────────────────────────────────────────────────────
   ctx.phase('Spec')
   let spec = setup.spec && setup.spec.path ? setup.spec : await ctx.agent(
-    `${COMMON}\n\n${ticket}\n\n${P.continuing(a, specPath)}${P.specAsk(config, specPath)}`,
-    { label: 'write-spec', schema: SPEC_WRITTEN, model: m(T.think) },
+    `${COMMON}\n\n${ticket}\n\n${P.continuing(a, specPath)}${P.specAsk(config, specPath)}` +
+      (draft ? ` Setup left a draft spec at ${draft}: delete it in the same commit, so the branch holds one spec.` : ''),
+    { label: 'write-spec', schema: SPEC_WRITTEN, model: m(specSlot()) },
   )
   if (!spec) return handBack('Spec', 'the spec writer did not finish')
   state.spec = spec
@@ -156,7 +162,8 @@ export async function run(ctx, { config, deps = realDeps }) {
         { label: `skeptic:${what === 'the spec' ? 'spec' : 'code'}:${i}#${round}`, schema: REFUTATION, model: m(what === 'the spec' ? specSlot() : T.think) },
       // A skeptic that died refuted nothing: dropping its finding would let
       // a crash read as a clean audit.
-      ).then((v) => (v && v.refuted ? null : f))))
+      // A skeptic that throws refuted nothing either.
+      ).then((v) => (v && v.refuted ? null : f), () => f)))
     return judged.filter((f) => f !== null)
   }
 
@@ -164,9 +171,6 @@ export async function run(ctx, { config, deps = realDeps }) {
   // person at once; the same finding confirmed more than STUCK_AFTER rounds
   // running is stuck; and a loop that reaches its round limit hands back
   // with everything still open. `streaks()` keeps one loop's count.
-  // A tier that names no spec slot still gets the strong model for its spec.
-  const specSlot = () => T.spec || 'strong'
-
   function streaks() {
     const streak = new Map()
     // Once per key per round: several findings in one ten-line window share a key.
@@ -256,13 +260,14 @@ export async function run(ctx, { config, deps = realDeps }) {
       state.why = `${state.why}; escalated on its diff: ${up.reasons.join(', ')}`
       ctx.log(`#${a.issue} escalated: ${up.reasons.join(', ')}`)
     }
-    redStreak = gate && gate.ok ? 0 : redStreak + 1
+    // A conflict is not a red gate: it leaves the count where it was.
+    if (gate) redStreak = gate.ok ? 0 : redStreak + 1
     // A gate red twice running moves the fixer up to the strong model.
     if (redStreak >= 2 && T.build !== config.tiers.full.build) { T = { ...T, build: config.tiers.full.build }; ctx.log('the gate was red twice running — the fixer moves to the strong model') }
 
     if (sync.sync === 'conflict') {
       // The base moved under the branch. Straight to the fixer; it spends
-      // no audit round, and the same conflict twice is stuck.
+      // no audit round, and the same conflict three rounds running is stuck.
       open = sync.conflicts.map((file) => ({
         severity: 'blocker', category: 'conflict', file, claim: `conflicts with ${BASE}`,
         evidence: `git merge ${BASE} conflicted in ${file}: the base has moved since this branch began`,

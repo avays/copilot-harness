@@ -171,7 +171,7 @@ commands: {
       MAVEN_USER: ${{ secrets.MAVEN_USER }}            # added
       MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}     # added
     # …and in its run: line, append ",MAVEN_USER,MAVEN_TOKEN" to the existing
-    # --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME list.
+    # --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME list (PR instead of ISSUE in review).
 
   - name: Collect the agents' outputs
     env:
@@ -206,7 +206,7 @@ detection, escalation and review sizing all go quiet without an error. Doctor fa
 Spock (`*Spec.groovy`), Cucumber or Kotest.
 
 **Check:** run the gate command yourself in a clean clone, then run red-check on a branch with a real
-change and its test (`node -e "import('./harness/lib/red-check.mjs').then(async m => console.log(await m.redCheck({ config: await (await import('./harness/lib/config.mjs')).loadConfig(), cwd: process.cwd(), base: 'origin/main' })))"`).
+change and its test (`node -e "import('./harness/lib/red-check.mjs').then(async m => console.log(await m.redCheck({ config: await (await import('./harness/lib/config.mjs')).loadConfig(), cwd: process.cwd(), base: 'origin/main' })))"`, with your `base` for `main`).
 It should print `failedOnBase: true`.
 
 ## 5. Sizing, lenses and models
@@ -262,7 +262,7 @@ Copilot model id. `null` uses Copilot's default. Start with all three set to `nu
 whatever the plan offers. Then set them: run `copilot` interactively and use `/model` to list the ids and
 their relative costs. Setup always uses `strong`, because every later step is sized by its call.
 
-Each tier names a slot for three kinds of work: `spec` (the spec audit and its revisions), `think` (the
+Each tier names a slot for three kinds of work: `spec` (writing the spec, its audit and its revisions), `think` (the
 code audit and skeptics) and `build` (implementing and fixing). The spec audit is the same loop as the
 code audit, and runs first on every ticket. Fresh auditors read the spec, a skeptic tries to refute each
 blocker, and every confirmed one is revised and audited again, until a round comes back clean. The same
@@ -279,7 +279,7 @@ built. Because the spec decides what gets built, `spec` defaults to `strong` on 
 | `review.depth` | `fast` sizes reviews one step down, `thorough` always large | `normal` |
 | `review.tinyLines`, `review.smallLines` | changed lines (source and tests) up to which a review is tiny, then small | 30, 300 |
 | `review.timeoutMinutes` | the review's Copilot run; keep it below the review job's 45 | 35 |
-| `copilot.allowTools` | what agents may run. **Anything the gate, `quick` or `testsOnly` calls must be here** (`shell(./gradlew:*)`, `shell(java:*)`), or agents are denied it headless | Maven, git and read-only shell tools |
+| `copilot.allowTools` | what agents may run. **Anything the gate, `quick` or `testsOnly` calls must be here** (`shell(./gradlew:*)`, `shell(java:*)`), or agents are denied it headless | as shipped in `harness.config.mjs`: Maven, git and read-only shell tools. Removed, it falls back to read, write and git only |
 | `copilot.denyTools` | always refused, over any allow | `git push`, `gh` |
 | `copilot.flags` | options before `workflow run` | `--experimental` |
 | `copilot.timeoutMinutes` | the whole ship run; below the build job's 120 | 100 |
@@ -360,7 +360,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 153 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 158 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'

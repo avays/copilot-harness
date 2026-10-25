@@ -45,6 +45,10 @@ export function shipPrBody(r) {
   s.push(r.outcome === 'pr'
     ? `Closes #${r.issue}.`
     : `Part of #${r.issue}. **Handed back: ${tame(r.reason)}** (in ${tame(r.phase)}). This draft holds what was built; what is still open is listed below.`)
+  if (r.closingCommits && r.closingCommits.length) {
+    s.push(`> [!WARNING]\n> The commit messages on this branch would close ${r.closingCommits.map(tame).join(', ')} on merge. ` +
+      `Edit the messages (or squash with your own) before merging, unless that is intended.`)
+  }
   if (r.spec) {
     s.push(`## Spec\n\n[\`${tame(r.spec.path)}\`](../blob/${r.branch}/${encodeURI(r.spec.path)}) — ${tame(r.spec.summary)}`)
     if (r.spec.decisions && r.spec.decisions.length) s.push(`**Decisions for the reviewer:**\n${r.spec.decisions.map((d) => `- [ ] ${tame(d)}`).join('\n')}`)

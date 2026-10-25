@@ -623,3 +623,30 @@ test('a tier with no spec slot still gets the strong model for its spec', async 
   await run(ctx, { config: config({ tiers: { small: { spec: null } } }), deps: deps() })
   assert.equal(ctx.calls.find((c) => c.label === 'spec-audit:combined#1').opts.model, 'm-strong')
 })
+
+test('a full ticket\'s own spec writer runs on the spec slot', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
+  await run(ctx, { config: config({ tiers: { full: { think: 'standard' } } }), deps: deps() })
+  assert.equal(ctx.calls.find((c) => c.label === 'write-spec').opts.model, 'm-strong')
+})
+
+test('a conflict between red gates does not move the fixer to the strong model', async () => {
+  const conflict = { sync: 'conflict', conflicts: ['pom.xml'] }
+  const ctx = fakeCtx(SHIP_ARGS, script())
+  await run(ctx, { config: config(), deps: deps({ syncs: [conflict], gates: [red(), green()] }) })
+  // round 1 conflict, round 2 red: not two reds running.
+  assert.equal(ctx.calls.find((c) => c.label === 'fix#2').opts.model, 'm-standard')
+})
+
+test('the same problem filed under another category is still stuck', async () => {
+  const round = (l) => Number(/#(\d+)$/.exec(l)[1])
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:criteria': (l) => ({ ...clean, findings: [blocker({ category: round(l) % 2 ? 'logic' : 'criterion-unmet' })] }) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.match(r.reason, /survived 2 fix attempts/)
+})
+
+test('a full spec writer is told to remove setup\'s draft at another path', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script({ setup: { proceed: true, reason: 'x', doneWhen: ['a'], sizing: { ...smallFacts, changesRule: true }, spec: { path: 'specs/7-other.md', summary: 's', decisions: [] } } }))
+  await run(ctx, { config: config(), deps: deps() })
+  assert.match(ctx.calls.find((c) => c.label === 'write-spec').prompt, /draft spec at specs\/7-other\.md: delete it/)
+})

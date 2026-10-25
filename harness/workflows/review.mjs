@@ -90,7 +90,8 @@ export async function run(ctx, { config }) {
     ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.skepticAsk({ f, where: `pull request #${a.pr}`, base: BASE, specPath: 'the spec in the diff, if any', list: listFindings })}`,
       { label: `skeptic:${i}`, schema: REFUTATION, model: m(plan.model) },
-    ).then((v) => (v && v.refuted ? null : f))))
+    // A skeptic that throws refuted nothing either.
+    ).then((v) => (v && v.refuted ? null : f), () => f)))
   const blockers = judged.filter((f) => f !== null)
   const minors = dedupe(all.filter((f) => f.severity === 'minor'))
 

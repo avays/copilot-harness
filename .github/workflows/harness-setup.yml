@@ -48,6 +48,8 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Doctor reads origin (the base branch); the checkout kept no credentials.
+          gh auth setup-git
           if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
             echo "::error::No COPILOT_GITHUB_TOKEN secret — see harness/ADAPTING.md §6"
             node harness/bin/doctor.mjs

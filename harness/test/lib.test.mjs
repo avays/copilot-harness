@@ -600,3 +600,12 @@ test('agent text cannot carry a hidden comment or a fake marker', async () => {
   const r = await answerSince([{ author: { login: 'bot' }, body, createdAt: '2026-10-01T10:30:00Z' }, { author: { login: 'ana' }, body: 'use 410', createdAt: '2026-10-01T11:00:00Z' }], SHIP_MARKER, async () => true, 'bot')
   assert.match(r.answer, /use 410/)
 })
+
+test('closing keywords in commit messages are found, the ticket\'s own excepted, and flagged on the PR', async () => {
+  const { closingKeywords } = await import('../bin/run.mjs')
+  const log = 'feat: discount\n\nFixes #7\n\u0000fix: rounding\n\nThis fixes #123 and resolves o/r#9.\nCloses https://github.com/o/r/issues/4\n\u0000'
+  assert.deepEqual(closingKeywords(log, 7).sort(), ['#123', 'https://github.com/o/r/issues/4', 'o/r#9'].sort())
+  assert.deepEqual(closingKeywords('chore: tidy\n', 7), [])
+  const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [], closingCommits: ['#123'] })
+  assert.match(body, /\[!WARNING\][\s\S]*would close #‍?123 on merge/)
+})

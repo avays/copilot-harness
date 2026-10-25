@@ -33,8 +33,15 @@ try { config = await loadConfig(root); check('harness.config.mjs loads', true) }
 
 if (config) {
   // Every run starts from origin/<base>; the default `main` is often wrong on a legacy repository.
-  const baseRef = run('git', ['ls-remote', '--exit-code', '--heads', 'origin', config.base], { cwd: root })
-  check(`base "${config.base}" exists on origin`, baseRef.status === 0, baseRef.status === 0 ? '' : `no branch "${config.base}" on origin — set base in harness.config.mjs`)
+  // exit 2: origin answered, and has no such branch. Anything else: origin
+  // could not be read (no credentials), which says nothing about base.
+  const baseRef = run('git', ['ls-remote', '--exit-code', '--heads', 'origin', config.base], { cwd: root, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+  if (baseRef.status === 0 || baseRef.status === 2) {
+    check(`base "${config.base}" exists on origin`, baseRef.status === 0, baseRef.status === 0 ? '' : `no branch "${config.base}" on origin — set base in harness.config.mjs`)
+  } else {
+    const viaApi = run('gh', ['api', `repos/{owner}/{repo}/branches/${encodeURIComponent(config.base)}`, '--jq', '.name'], { cwd: root, env: ghEnv })
+    check(`base "${config.base}" exists on origin`, viaApi.status === 0, viaApi.status === 0 ? 'checked through the API: git could not read origin' : `could not read origin to check it (git: exit ${baseRef.status}; the API: no branch, or no access)`)
+  }
   const mapOk = Boolean(config.map) && !/^TODO/.test(config.map)
   check('config.map is filled in', mapOk, mapOk ? '' : config.map ? 'still the TODO placeholder' : 'empty: every agent will re-learn the repo')
   const found = config.instructions.filter((p) => existsSync(join(root, p)))
@@ -65,7 +72,7 @@ if (config) {
 }
 
 const cop = run(config ? config.copilot.bin : 'copilot', ['--version'], { shell: process.platform === 'win32' })
-check('Copilot CLI is installed', cop.status === 0, cop.status === 0 ? cop.stdout.trim().split('\n')[0] : 'npm install -g @github/copilot')
+check('Copilot CLI is installed', cop.status === 0, cop.status === 0 ? cop.stdout.trim().split('\n')[0] : 'npm install -g @github/copilot@1.0.103, then copilot login')
 const ghAuth = run('gh', ['auth', 'status'])
 check('gh is signed in', ghAuth.status === 0, ghAuth.status === 0 ? '' : 'gh auth login, or GH_TOKEN in CI')
 // Presence only: whether the token may make Copilot requests is proved by
