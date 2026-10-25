@@ -242,7 +242,7 @@ because everything is `.mjs` with no dependencies.
 | A private Maven repository | The build job needs its credential, and **the agents can read it** | Use a read-only package token; add it to the build step's env, `--preserve-env` and the artifact masking (ADAPTING §4) |
 | Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
-| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person re-signs the branch (`git rebase --exec 'git commit --amend --no-edit -S' origin/<base>`, then force-push the `harness/*` branch), or the mergers are given a bypass for the rule |
+| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit (`git fetch origin && git reset --soft origin/<base> && git commit -S`, then force-push the `harness/*` branch: the harness has already merged the base in, so nothing else changes), or the mergers are given a bypass for the rule |
 | A commit message convention | Agents are told to follow the project's convention (with a Conventional Commits fallback such as `docs(spec): …` if it states none) | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
@@ -402,7 +402,7 @@ unprotected. Adapt that step if it fails; don't delete it.
 - **Harness PRs show no CI.** That's the `GITHUB_TOKEN` rule above, not a failure.
 - **The harness review comments on people's PRs too.** That's the default; narrow `on:` if unwanted.
 - **The adoption PR itself shows a red *Harness · review*.** Its base has no harness yet, so the review's
-  first job can't start. Expected once; merge it.
+  Prepare step finds no `harness/bin/run.mjs` and fails. Expected once; merge it.
 - **A ticket hands back from the spec audit without any code.** By design: the ticket is ambiguous, or
   its spec couldn't be made to satisfy the auditors. The issue comment lists what is open; answer it
   and relabel.
