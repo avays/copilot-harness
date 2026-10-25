@@ -33,13 +33,13 @@ From this repository into the project's:
 
 | Copy | Notes |
 | --- | --- |
-| `harness/` | All of it, `harness/test/` included: the tests let you check your changes to the harness |
+| `harness/` | All of it: `harness/test/` lets you check your changes to the harness, and this guide (`harness/ADAPTING.md`) is what the copied files' comments point to |
 | `harness.config.mjs` | To the repository root |
 | `.github/extensions/harness/` | Copilot discovers the extension here. The folder name must stay `harness` |
 | `.github/workflows/harness-ship.yml`, `harness-review.yml`, `harness-setup.yml` | The names are prefixed, so they won't collide with the project's own |
 
-**Don't copy** `README.md`, `ADAPTING.md`, `AGENTS.md` or `package.json`. They describe this boilerplate,
-and the project's `AGENTS.md` must stay its own. Link to this repository from the project's docs instead.
+**Don't copy** the root `README.md`, `AGENTS.md` or `package.json`. They describe this boilerplate, and
+the project's `AGENTS.md` must stay its own.
 
 Add `.harness/` to the project's `.gitignore`. The harness writes its own ignore file there too, so this is
 belt and braces.
@@ -51,6 +51,12 @@ Then edit the three workflow files where they say `ADAPT`:
 - **The label names**, if you change them. They live in three places that must agree:
   `github.labels` in `harness.config.mjs`, the `if:` in `harness-ship.yml`, and the `gh label create`
   lines in `harness-setup.yml`.
+- **Anything else the gate needs on the runner,** installed in the build job *before* the step that turns
+  sudo off: system packages, a database, browsers.
+- **Docker.** The build and review jobs switch Docker off before the agents start, because access to
+  Docker is root by another name. If the gate needs it (Testcontainers is common in Spring Boot), delete
+  the Docker lines in that step, and read §9 *Isolation* first: the boundary inside the job is then gone.
+  `./mvnw verify` passing on a laptop with Docker running proves nothing about this.
 
 **Check:** `node harness/bin/doctor.mjs` runs. It will list what is still to do.
 
@@ -147,7 +153,7 @@ commands: {
 
 Every path is a **prefix from the repository root**. In a multi-module build, write the module in:
 `app/src/main/`, not `src/main/`. With the wrong prefix nothing matches, and red-check, test-tampering
-detection, escalation and review sizing all go quiet without an error. Doctor warns when `source` or
+detection, escalation and review sizing all go quiet without an error. Doctor fails when `source` or
 `tests` matches no tracked file.
 
 - **`source`**: app code; red-check reverts it. Leave out legacy code that tickets don't change.
@@ -156,7 +162,8 @@ detection, escalation and review sizing all go quiet without an error. Doctor wa
   prefixes too, **with no globs**. For a migration, consider `src/main/resources/META-INF/persistence.xml`,
   `src/main/resources/application` (which covers `application.yml` and `application-prod.yml`), the
   Flyway or Liquibase folder, security configuration, every module's `pom.xml` (`pom.xml`, `app/pom.xml`),
-  and anything shared by the legacy and new code. Doctor flags an entry that matches no file.
+  and anything shared by the legacy and new code. Doctor warns (⚠, not a failure) about an entry that
+  matches no file yet, such as a migrations folder still to come.
 - **`lessons`**: where Learn writes. **Add this file to `instructions`**, or the lessons are never read.
 
 ### `tests`
@@ -259,8 +266,9 @@ their own config, so a failure here means you've changed the harness itself.
    runs. GitHub also only runs the setup workflow, and only fires the `labeled` trigger, from the default
    branch. Locally, the harness that runs is the one in the checkout you run `run.mjs` from.
 5. **Actions → Harness · setup → Run workflow** — creates the labels and runs step 3 on a runner.
-6. **One tiny ticket, locally, without publishing:** `node harness/bin/run.mjs ship <n> --small --no-publish`.
-   Pick a real but small change. Nothing is pushed, posted or labelled. Read its run folder
+6. **One tiny ticket, locally, without publishing:** `node harness/bin/run.mjs ship <n> --no-publish`.
+   Pick a real but small change, and let it size itself. A forced size (`--small`, `--full`) also turns
+   off escalation, so it would not show you that. Nothing is pushed, posted or labelled. Read its run folder
    (`.harness/runs/…/result.json`) and its worktree (`.harness/worktrees/issue-<n>`): the spec, the
    commits, the rounds, the credits.
 7. **The same ticket in CI:** label it `ready-for-ai`. You get a pull request, or a draft with the
@@ -292,7 +300,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 109 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 110 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -301,7 +309,7 @@ behaviour you change.
   environment and staging `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it
   used (0 on CLI 1.0.103).
 - Staging (no folder trust carried over), the agents' environment, the timeout that stops Copilot and
-  everything it started, and the reap of a process that left its group, by the same tests, live.
+  everything it started, and the reap of a process that left its group or keeps forking, by the same tests, live.
 
 **Checked by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
 definitions (`doctor --live` fails if registration does), and the workflow files pass
@@ -316,7 +324,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   comment. No test covers them, because they talk to GitHub. §7 steps 6–8 do.
 - **The token's Copilot Requests permission.** `--live` makes no model call; the first ticket does.
 - **Structured output from the models you choose.** Copilot validates each agent's answer against the
-  schema and re-asks twice. A model that keeps failing makes that agent return null, which the harness
+  schema and re-asks once. A model that keeps failing makes that agent return null, which the harness
   treats as "did not finish".
 - **Permission patterns.** Deny rules always beat allow rules (`copilot help permissions`), but shell
   rules match on the first subcommand, so a git alias might get round `shell(git push)`. The harness
@@ -349,25 +357,30 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   leaves nothing in your `~/.copilot` (it used to switch experimental mode on there).
 - **In Actions, the build job** uses its read-only token only for the checkout and setup actions. From the
   agents' step on, no step has a GitHub token in its environment, and the checkouts keep no credentials.
-  Before the agents start, sudo and Docker are switched off, and the step fails if either still works
-  (Docker counts because the `docker` group is root by another name). The agents' environment carries
-  no path to the step's command files, and the step empties them anyway before it ends, so agents can't
-  set env or PATH for later steps. Copilot's whole process group is killed when it exits, or when
-  `copilot.timeoutMinutes` passes, which is below the job's own timeout. Then every process of the
-  runner user started since the agents' step began is killed, in that step and again in an `always()`
-  step that runs even after a cancellation. The job saves no cache. Claiming and publishing are separate jobs that never run branch
-  code. The work crosses to publish as a git bundle, publish takes the issue, branch and title from the
-  claim (never from the build), checks where it is pushing, and never pushes a workflow file.
+  Every job's trusted checkout is pinned to the default branch, so a run started by hand from another
+  branch still runs the default branch's harness. Before the agents start, sudo and Docker are switched
+  off, and the step fails if either still works (Docker counts because the `docker` group is root by
+  another name). The agents' environment carries no path to the step's command files. Copilot's whole
+  process group is killed when it exits, or when `copilot.timeoutMinutes` (or `review.timeoutMinutes`)
+  passes, both below their job's timeout. Then the reap stops every process of the runner user started
+  since the agents' step began, scanning until a pass finds nothing new, in that step and again in an
+  `always()` step that runs even after a cancellation. The step's command files are emptied before and
+  after the reap. The job saves no cache. Claiming and publishing are separate jobs that never run
+  branch code. The work crosses to publish as a git bundle. Publish takes the issue, branch and title
+  from the claim (never from the build), checks where it is pushing, and never pushes a workflow file.
+- **That cleanup is best effort, not a boundary.** The agents' code runs as the same user as the steps
+  after it. A process written to fight the reap can race it — by killing it, or by forking faster than it
+  scans — and so reach the upload steps' runtime token (artifact and cache upload, which can poison a
+  cache other workflows restore) or the step's command files. Everything else in this list holds
+  regardless.
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
   spend Copilot credits; read anything the build job is given (a read-only package token, if you add
-  one); write commits a person will review; and **write the build job's report**. The report is the PR
-  body's *Checks* and audit table, and the hand-off file is written in a job where the agents' code ran.
-  The project's own CI on the pull request is the independent check, so make it a required status check.
-  The reap kills by user and start time, so an escaped process can't hide by changing its name or
-  group. A process that can do anything about it would have needed root, which the job no longer has.
-  This is still one job on one VM, though. If the gate needs Docker (Testcontainers, say), the Docker
-  lines must go, and an agent's code can then become root and reach the runner's job tokens. If the tickets come from people you don't trust (a public repository),
-  run the build job in a container or VM of its own.
+  one); write commits a person will review; **write the build job's report**, that is the PR body's
+  *Checks* and audit table, since the hand-off is written in a job where the agents' code ran; and, if it
+  wins the race above, upload to the job's cache. The project's own CI on the pull request is the
+  independent check, so make it a required status check. If the tickets come from people you don't
+  trust (a public repository), or the gate needs Docker, run the build job in a container or VM of its
+  own.
 - **Who can start a run.** Anyone who can label an issue (triage access) can ship it, and its body is the
   agents' brief, so prompt injection arrives that way. Keep `ready-for-ai` to people who would review the
   result.
@@ -397,7 +410,8 @@ definitions (`doctor --live` fails if registration does), and the workflow files
 
 ## Checklist
 
-- [ ] Files copied (§2); `.harness/` ignored; the workflows' JDK and label names match (§2)
+- [ ] Files copied (§2); `.harness/` ignored; the workflows' JDK, label names, gate prerequisites and
+      Docker decision made (§2)
 - [ ] `instructions` lists the project's own rule files, and the migration decisions are written down (§3)
 - [ ] `map` filled in (§3)
 - [ ] `commands.gate` runs green in a clean clone; `quick` is fast; `testsOnly` works (§4)

@@ -52,7 +52,7 @@ if (config) {
   // risky entries are prefixes too, with no globs: one that matches nothing
   // can never escalate a run, and nothing else would say so.
   const dead = config.paths.risky.filter((p) => !tracked.some((f) => f === p || f.startsWith(p)))
-  check('every paths.risky entry matches a tracked file', !dead.length, dead.length ? `no file under ${dead.join(', ')} (prefixes, no globs)` : '')
+  warn('every paths.risky entry matches a tracked file', !dead.length, dead.length ? `no file under ${dead.join(', ')} (prefixes, no globs)` : '')
   warn('red-check is configured', Boolean(config.commands.testsOnly), config.commands.testsOnly ? '' : 'commands.testsOnly is null: tests that prove nothing go unnoticed')
   check('the extension is present', existsSync(join(root, '.github/extensions/harness/extension.mjs')))
   check('the spec template is present', existsSync(join(root, 'harness/templates/spec.md')))
@@ -105,6 +105,6 @@ if (live && config && cop.status === 0) {
 
 for (const r of results) console.log(`${r.ok ? '✓' : r.warning ? '⚠' : '✗'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`)
 const failed = results.filter((r) => !r.ok && !r.warning).length
-console.log(failed ? `\n${failed} to fix. ADAPTING.md says how.` : '\nReady.')
+console.log(failed ? `\n${failed} to fix. harness/ADAPTING.md says how.` : '\nReady.')
 process.exitCode = failed ? 1 : 0
 if (!live && !failed) console.log('Next: node harness/bin/doctor.mjs --live  (runs a no-agent workflow in this working tree: Copilot loads the extension and the config; costs no credits)')

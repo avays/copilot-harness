@@ -1,4 +1,4 @@
-// The one file to edit when you adopt the harness. ADAPTING.md walks through
+// The one file to edit when you adopt the harness. harness/ADAPTING.md walks through
 // every key; anything left out falls back to harness/lib/config.mjs.
 //
 // The values below are a starting point for a Maven / Spring Boot project.

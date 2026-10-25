@@ -187,7 +187,7 @@ export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedi
 }
 
 /** Run the workflow headless; the result file, or an error result. */
-export function runCopilot(root, config, workflow, args, dir, cwd) {
+export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinutes = config.copilot.timeoutMinutes) {
   const argsFile = join(dir, 'args.json'), resultFile = join(dir, 'result.json')
   writeFileSync(argsFile, JSON.stringify(args, null, 2))
   const argv = copilotArgv(config, workflow, argsFile, resultFile)
@@ -208,15 +208,16 @@ export function runCopilot(root, config, workflow, args, dir, cwd) {
     const killGroup = () => { if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} } else { try { p.kill('SIGKILL') } catch {} } }
     // Below the job's own timeout, so the step still ends by itself and the
     // reap after it runs: a job that times out runs nothing else in the step.
-    const timer = setTimeout(() => { timedOut = true; killGroup() }, config.copilot.timeoutMinutes * 60_000)
+    const timer = setTimeout(() => { timedOut = true; killGroup() }, timeoutMinutes * 60_000)
     p.stdout.on('data', (d) => { out += d; process.stderr.write(d) })
     p.on('error', (e) => { clearTimeout(timer); stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
     p.on('close', (code) => {
       clearTimeout(timer)
       killGroup()
       stage.cleanup()
-      if (timedOut) return done({ outcome: 'error', reason: `the run passed copilot.timeoutMinutes (${config.copilot.timeoutMinutes}) and was stopped` })
+      // Kept on a timeout too: that is when someone will want to read it.
       writeFileSync(join(dir, 'stdout.jsonl'), out)
+      if (timedOut) return done({ outcome: 'error', reason: `the run passed its timeout (${timeoutMinutes} minutes) and was stopped` })
       const { status, usage } = readEvents(out)
       // Exit 0 is the only case where the result file is this run's; a
       // failed run leaves any earlier file untouched.
@@ -477,7 +478,7 @@ async function reviewBuild(opt, root, config, state) {
   const result = await runCopilot(root, config, 'harness-review', {
     pr: opt.n, title: state.title, body: state.body, base: state.base, workdir, size,
     ...(state.ticket ? { ticket: state.ticket } : {}),
-  }, dir, workdir)
+  }, dir, workdir, config.review.timeoutMinutes)
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
   writeHandoff(root, opt, 'build', { result })
   return result

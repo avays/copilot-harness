@@ -48,7 +48,7 @@ jobs:
       # The base, never the pull request: this job holds the GitHub token.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -77,7 +77,7 @@ jobs:
       # The base's harness at the root; the pull request in the workspace.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -112,7 +112,7 @@ jobs:
       # users' files; the step fails closed if either survives.
       # ADAPT: anything the gate needs installed must be installed above. If
       # the gate needs Docker (Testcontainers), drop the Docker lines and read
-      # ADAPTING.md §9 first: the boundary inside this job is then gone.
+      # harness/ADAPTING.md §9 first: the boundary inside this job is then gone.
       - name: Turn off sudo and Docker for the rest of the job
         id: lock
         run: |
@@ -134,10 +134,12 @@ jobs:
         run: |
           status=0
           node harness/bin/run.mjs review "$PR" --phase build || status=$?
-          node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}"
           # Whatever the agents wrote to this step's command files would set
-          # env or PATH for the steps after it.
-          : > "$GITHUB_ENV"; : > "$GITHUB_PATH"
+          # env or PATH for the steps after it: empty them before and after
+          # the reap, and let nothing here stop the step early.
+          : > "$GITHUB_ENV" || true; : > "$GITHUB_PATH" || true
+          node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}" || true
+          : > "$GITHUB_ENV" || true; : > "$GITHUB_PATH" || true
           exit $status
 
       # Again, whatever happened: a cancelled or timed-out step never reached
@@ -175,7 +177,7 @@ jobs:
       # The base branch's harness posts the comment, not the PR's.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:

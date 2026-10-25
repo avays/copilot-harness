@@ -271,7 +271,7 @@ test('a Copilot run past its timeout is stopped, with everything it started', as
   chmodSync(bin, 0o755)
   const c = config({ copilot: { bin, timeoutMinutes: 0.01 } })
   const r = await runCopilot(resolve(import.meta.dirname, '../..'), c, 'harness-ping', {}, dir, dir)
-  assert.match(r.reason, /passed copilot.timeoutMinutes/)
+  assert.match(r.reason, /passed its timeout/)
   const child = (await import('node:fs')).readFileSync(pidFile, 'utf8').trim()
   assert.notEqual(spawnSync('kill', ['-0', child]).status, 0, 'the child it started is gone too')
 })
@@ -305,4 +305,22 @@ test('sizing: many source files bring in the criteria and rules auditors', () =>
 test('two findings eight lines apart in one ten-line window share a stuck key', () => {
   assert.equal(key(blocker({ line: 41 })), key(blocker({ line: 48, claim: 'reworded' })))
   assert.notEqual(key(blocker({ line: 41 })), key(blocker({ line: 51 })))
+})
+
+test('the reap stops a process that keeps forking, children and all', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { resolve } = await import('node:path')
+  const reap = resolve(import.meta.dirname, '../bin/reap.mjs')
+  // A setsid'd loop that forks a new sleeper every few milliseconds.
+  const script = `since=$(node "${reap}" --mark)
+setsid bash -c 'while true; do sleep 30 & sleep 0.005; done' & L=$!; disown
+sleep 0.4
+node "${reap}" --since "$since" >/dev/null
+sleep 0.3
+left=$(pgrep -u "$(id -u)" -f "^sleep 30$" | wc -l)
+kill -0 $L 2>/dev/null && echo "loop alive" || echo "loop gone"
+echo "sleepers left: $left"`
+  const r = spawnSync('bash', ['-c', script], { encoding: 'utf8' })
+  assert.match(r.stdout, /loop gone/)
+  assert.match(r.stdout, /sleepers left: 0/)
 })

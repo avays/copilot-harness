@@ -8,7 +8,7 @@ it opens a pull request that says what was proved and what was not. A ticket tha
 goes to a person as a **draft**, with everything still open written down.
 
 This is boilerplate. It is meant to be dropped into an existing repository that already has its own
-instructions and rules. **To adopt it, read [ADAPTING.md](ADAPTING.md).**
+instructions and rules. **To adopt it, read [harness/ADAPTING.md](harness/ADAPTING.md).**
 
 ## How a ticket flows
 
@@ -58,7 +58,7 @@ These are why each piece exists. Keep them when you change the harness.
   publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
   with no repository access, and runs with sudo off. Every job runs the default branch's harness,
   and the branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
-  pushed. On a laptop there is no such isolation (ADAPTING.md §9).
+  pushed. On a laptop there is no such isolation (harness/ADAPTING.md §9).
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.
 
@@ -121,8 +121,8 @@ more. Measure a few of your own tickets before setting `copilot.limits`.
 
 Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The CLI is pinned to
 1.0.103, and `--experimental` is required. What has been proved and what hasn't is listed in
-[ADAPTING.md §9](ADAPTING.md#9-what-is-proved-and-what-is-not).
+[harness/ADAPTING.md §9](harness/ADAPTING.md#9-what-is-proved-and-what-is-not).
 
 This is a port of the workflow half of the ORBIT '26 workshop harness, which was built for Claude Code.
 Not ported (yet): browser QA, `@mention` responses on PRs, live progress comments, and per-issue
-spend comments. ADAPTING.md §8 says where each would go.
+spend comments. harness/ADAPTING.md §8 says where each would go.

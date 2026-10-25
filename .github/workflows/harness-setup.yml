@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       # ADAPT: keep these names in step with github.labels in
@@ -48,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
-            echo "::error::No COPILOT_GITHUB_TOKEN secret — see ADAPTING.md §6"
+            echo "::error::No COPILOT_GITHUB_TOKEN secret — see harness/ADAPTING.md §6"
             node harness/bin/doctor.mjs
             exit 1
           fi

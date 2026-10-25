@@ -10,12 +10,12 @@
 ## Every job runs the base branch's harness; the branch is only the workspace
 ## the agents edit. The work crosses from build to publish as a git bundle.
 ##
-## Private Maven repository? See ADAPTING.md §4: its credential goes in the
+## Private Maven repository? See harness/ADAPTING.md §4: its credential goes in the
 ## Build step's env, and the agents can read it.
 ##
 ## Needs: a COPILOT_GITHUB_TOKEN secret (fine-grained PAT, owned by a person,
 ## with the "Copilot Requests" permission and no repository access).
-## ADAPTING.md §6 has the details.
+## harness/ADAPTING.md §6 has the details.
 name: "Harness · ship"
 
 on:
@@ -55,8 +55,11 @@ jobs:
       skip: ${{ steps.prepare.outputs.skip }}
       ref: ${{ steps.prepare.outputs.ref }}
     steps:
+      # Every trusted checkout is the default branch, whatever ref started the
+      # run: a dispatch from a harness branch must not run that branch's code.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -92,6 +95,7 @@ jobs:
       # no credentials to fetch with later.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
@@ -128,7 +132,7 @@ jobs:
       # users' files; the step fails closed if either survives.
       # ADAPT: anything the gate needs installed must be installed above. If
       # the gate needs Docker (Testcontainers), drop the Docker lines and read
-      # ADAPTING.md §9 first: the boundary inside this job is then gone.
+      # harness/ADAPTING.md §9 first: the boundary inside this job is then gone.
       - name: Turn off sudo and Docker for the rest of the job
         id: lock
         run: |
@@ -155,10 +159,12 @@ jobs:
           git config --global user.email "harness@users.noreply.github.com"
           status=0
           node harness/bin/run.mjs ship "$ISSUE" --phase build || status=$?
-          node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}"
           # Whatever the agents wrote to this step's command files would set
-          # env or PATH for the steps after it.
-          : > "$GITHUB_ENV"; : > "$GITHUB_PATH"
+          # env or PATH for the steps after it: empty them before and after
+          # the reap, and let nothing here stop the step early.
+          : > "$GITHUB_ENV" || true; : > "$GITHUB_PATH" || true
+          node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}" || true
+          : > "$GITHUB_ENV" || true; : > "$GITHUB_PATH" || true
           exit $status
 
       # Again, whatever happened: a cancelled or timed-out step never reached
@@ -203,6 +209,7 @@ jobs:
       # harness, not anything the agents wrote.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4

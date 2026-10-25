@@ -1,6 +1,6 @@
 # Working on the Copilot harness
 
-This repository is boilerplate. It gets copied into other projects, as [ADAPTING.md](ADAPTING.md)
+This repository is boilerplate. It gets copied into other projects, as [harness/ADAPTING.md](harness/ADAPTING.md)
 describes. This file is for an agent changing the harness here; it is not copied along.
 
 - **Loops are code; words are prompts.** Change what agents are told in `harness/lib/prompts.mjs`.
@@ -18,7 +18,7 @@ describes. This file is for an agent changing the harness here; it is not copied
   never let a job that holds one run code from the branch. The harness that runs is staged from the
   root checkout (`stageHarness` in `run.mjs`) and loaded as a user extension; the branch is only the
   workspace under `.harness/worktrees/`, where Copilot runs. The one credential a build job may
-  get is a read-only package token for the gate (ADAPTING.md §4).
+  get is a read-only package token for the gate (harness/ADAPTING.md §4).
 - **Every `ctx.agent` call needs a unique label.** Copilot memoizes identical calls, so two calls with
   the same prompt and label share one agent. The tests check this.
 - **Schemas use Copilot's subset:** `type`, `required`, `enum`, `const`, `properties`/`items`,

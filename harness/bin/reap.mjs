@@ -46,8 +46,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const i = process.argv.indexOf('--since')
   const since = i > 0 ? Number(process.argv[i + 1]) : null
   if (i > 0 && !(since > 0)) { console.error('reap: --since needs a tick count'); process.exit(2) }
-  const pids = readdirSync('/proc').filter((d) => /^\d+$/.test(d)).map(Number)
-  const kill = victims({ self: process.pid, me: process.getuid(), pids, parentOf, startOf, userOf, since })
-  for (const p of kill) { try { process.kill(p, 'SIGKILL') } catch {} }
-  console.log(`harness: stopped ${kill.length} process${kill.length === 1 ? '' : 'es'} left behind`)
+  // Freeze, then rescan until a pass finds nobody new: a process that forks
+  // between one scan and the kill must not leave a child behind. Frozen
+  // processes can't fork or fight back; then all of them die together.
+  // Best effort: a process of the same user can still kill this one first.
+  const frozen = new Set()
+  for (let pass = 0; pass < 50; pass++) {
+    const pids = readdirSync('/proc').filter((d) => /^\d+$/.test(d)).map(Number)
+    const found = victims({ self: process.pid, me: process.getuid(), pids, parentOf, startOf, userOf, since }).filter((p) => !frozen.has(p))
+    if (!found.length) break
+    for (const p of found) { try { process.kill(p, 'SIGSTOP'); frozen.add(p) } catch {} }
+  }
+  for (const p of frozen) { try { process.kill(p, 'SIGKILL') } catch {} }
+  console.log(`harness: stopped ${frozen.size} process${frozen.size === 1 ? '' : 'es'} left behind`)
 }

@@ -1,5 +1,5 @@
 // Defaults for every key in harness.config.mjs, and the merge. A project's
-// config only needs what differs; ADAPTING.md says what each key is for.
+// config only needs what differs; harness/ADAPTING.md says what each key is for.
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -57,7 +57,8 @@ export const DEFAULTS = {
     },
   },
   lenses: { code: [], spec: [] },
-  review: { depth: 'normal', tinyLines: 30, smallLines: 300 },
+  // timeoutMinutes: the review's Copilot run, below the review job's 45.
+  review: { depth: 'normal', tinyLines: 30, smallLines: 300, timeoutMinutes: 35 },
   learn: { enabled: true },
   github: {
     labels: { ready: 'ready-for-ai', working: 'ai-working', done: 'ready-for-human', stuck: 'needs-human', full: 'ship:full' },
