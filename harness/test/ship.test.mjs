@@ -669,3 +669,30 @@ test('a dead auditor after a conflict does not list the conflict as unresolved',
   const r = await run(fakeCtx(SHIP_ARGS, script({ 'audit:': undefined })), { config: config(), deps: deps({ syncs: [{ sync: 'conflict', conflicts: ['pom.xml'] }] }) })
   assert.deepEqual(r.alsoOpen, [])
 })
+
+test('an implementer that says it cannot build hands back with its summary', async () => {
+  const r = await run(fakeCtx(SHIP_ARGS, script({ implement: { ok: false, summary: 'needs a schema change the ticket rules out' } })), { config: config(), deps: deps() })
+  assert.equal(r.phase, 'Implement')
+  assert.match(r.reason, /needs a schema change/)
+})
+
+test('a code skeptic that throws keeps its finding', async () => {
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++n === 1 ? { ...clean, findings: [blocker()] } : clean), 'skeptic:code': () => { throw new Error('boom') } }))
+  await run(ctx, { config: config(), deps: deps() })
+  assert.ok(ctx.calls.some((c) => c.label === 'fix#1'))
+})
+
+test('a dead auditor after a red round lists the fix nobody re-audited', async () => {
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++n === 1 ? { ...clean, findings: [blocker({ claim: 'X' })] } : undefined) }))
+  const r = await run(ctx, { config: config(), deps: deps({ gates: [green(), red(), green()] }) })
+  assert.match(r.reason, /could not finish/)
+  assert.deepEqual(r.alsoOpen.map((f) => f.claim), ['X'])
+})
+
+test('a ticket in question is handed back even when a finding is also stuck', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:criteria': (l) => ({ ...clean, findings: l.endsWith('#3') ? [blocker(), blocker({ category: 'scope', line: 300, claim: 'contradicts' })] : [blocker()] }) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.match(r.reason, /ticket itself is in question/)
+})

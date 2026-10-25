@@ -89,12 +89,15 @@ export function lastHandBack(comments, marker, harness) {
  * matters: `canWrite(login)` decides, and the skipped authors are returned.
  */
 export async function answerSince(comments, marker, canWrite, harness = null) {
-  // A hand-back may come from this identity, or from a person's laptop run
-  // (a person with write access): a pasted marker from anyone else is text.
+  // A hand-back may come from this identity; from the Actions bot (only this
+  // repository's workflows can post as it, and the jobs that run agents
+  // can't comment at all); or from a person's laptop run, a person with
+  // write access. A pasted marker from anyone else is text.
   const trusted = []
   for (const c of comments) {
     const login = c.author && c.author.login
-    if (String(c.body || '').includes(marker) && harness && !sameLogin(login, harness) && !(login && (await canWrite(login, c)))) continue
+    const fromHarness = sameLogin(login, harness) || sameLogin(login, 'github-actions[bot]')
+    if (String(c.body || '').includes(marker) && harness && !fromHarness && !(login && (await canWrite(login, c)))) continue
     trusted.push(c)
   }
   const back = lastHandBack(trusted, marker, null)

@@ -709,3 +709,35 @@ test('a file named after a secret is not uploaded', async () => {
   mask(d, ['SECRETTOKEN123'])
   assert.deepEqual(fs.readdirSync(d), ['ok.txt'])
 })
+
+test('a laptop run reads a hand-back the Actions bot posted', async () => {
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  const c = (login, body, createdAt) => ({ author: { login }, body, createdAt })
+  const fromCi = c('github-actions', `404 or 410?\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`, '2026-10-01T10:30:00Z')
+  const r = await answerSince([fromCi, c('ana', 'use 410', '2026-10-01T11:00:00Z')], SHIP_MARKER, async (l) => l === 'ana', 'andy')
+  assert.match(r.answer, /use 410/)
+})
+
+test('dedupe keeps a second reading of the same place in also', () => {
+  const merged = dedupe([blocker({ claim: 'first reading' }), blocker({ claim: 'second reading', category: 'logic' })])
+  assert.equal(merged.length, 1)
+  assert.deepEqual(merged[0].also.map((x) => x.claim), ['second reading'])
+})
+
+test('more edges: the files boundary, could-not-finish, the branch anchor, the repo match, the cut', async () => {
+  const { explain, issueFromBranch, closingKeywords } = await import('../bin/run.mjs')
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  const c = config()
+  assert.deepEqual(profileFor({ ...smallFacts, files: 7 }, c).codeLenses, ['criteria', 'rules'])
+  assert.deepEqual(profileFor({ ...smallFacts, files: 6 }, c).codeLenses, ['combined'])
+  assert.match(explain({ outcome: 'handback', reason: 'the combined auditor could not finish' }, ['quota: q']).reason, /Copilot reported/)
+  assert.equal(issueFromBranch('feature/harness/42-x'), null)
+  assert.deepEqual(closingKeywords('fixes O/R#7', 7, 'o/r'), [])
+  const long = 'x'.repeat(6000) + ' END'
+  const back = { author: { login: 'bot' }, body: `q\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`, createdAt: '2026-10-01T10:30:00Z' }
+  const r = await answerSince([back, { author: { login: 'ana' }, body: long, createdAt: '2026-10-01T11:00:00Z' }], SHIP_MARKER, async () => true, 'bot')
+  assert.ok(r.answer.length < 4100 + 'The hand-back said:\nq\n\nThe answer:\n…'.length)
+  assert.match(r.answer, /END$/)
+})

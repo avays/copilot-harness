@@ -92,3 +92,9 @@ test('a review is told the spec may not exist: a person\'s pull request has none
   await run(ctx, { config: config() })
   assert.match(ctx.calls[0].prompt, /then the spec the diff adds, if any/)
 })
+
+test('the review skeptic runs on the review size\'s model', async () => {
+  const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => (l.startsWith('lens:') ? lensReport({ findings: l.startsWith('lens:rules') ? [blocker()] : [] }) : l.startsWith('skeptic:') ? { refuted: true, why: '' } : undefined))
+  await run(ctx, { config: config() })
+  assert.equal(ctx.calls.find((c) => c.label.startsWith('skeptic:')).opts.model, 'm-strong')
+})

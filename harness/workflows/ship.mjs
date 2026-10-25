@@ -295,7 +295,8 @@ export async function run(ctx, { config, deps = realDeps }) {
       ))
       // What the last round confirmed was fixed but never re-audited.
       // A red gate's or a conflict's findings are resolved: this round's gate is green.
-      if (res.missing.length) return handBack('Code Audit', `the ${res.missing.join(', ')} auditor could not finish`, [], open.filter((f) => !['gate', 'conflict'].includes(f.category)))
+      // What the last audit confirmed was fixed but never audited again.
+      if (res.missing.length) return handBack('Code Audit', `the ${res.missing.join(', ')} auditor could not finish`, [], lastAudit)
       const raised = [...res.reports.flatMap(findingsOf), ...redCheckFinding(lastRed, BASE)]
       minors = raised.filter((f) => f.severity === 'minor')
       open = await confirm(raised.filter((f) => f.severity === 'blocker'), 'the change', round)
