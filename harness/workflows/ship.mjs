@@ -165,7 +165,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   // The cheapest place to catch a misreading: nothing is built yet.
   const specLenses = [
     ...Object.entries(P.SPEC_LENSES).map(([k, ask]) => ({ key: k, ask })),
-    ...config.lenses.spec,
+    ...config.lenses.spec.map((l) => ({ ...l, ask: typeof l.ask === 'function' ? l.ask(BASE) : l.ask })),
   ].filter((l) => T.specLenses.includes(l.key) || (l.tiers && l.tiers.includes(T.size)))
   let carried = []
   for (let round = 1; round <= T.specRounds; round++) {
@@ -176,7 +176,9 @@ export async function run(ctx, { config, deps = realDeps }) {
     ))
     if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`)
     const found = res.reports.flatMap(findingsOf)
-    const blockers = found.filter((f) => f.severity === 'blocker' && !carried.some((c) => where(c) === where(f)))
+    // A carried gap is still in the spec, so the next round raises it again;
+    // only the same problem is skipped, not a new one on the same line.
+    const blockers = found.filter((f) => f.severity === 'blocker' && !carried.some((c) => where(c) === where(f) && c.category === f.category))
     const confirmed = blockers.length ? await confirm(blockers, 'the spec', round) : []
     history.push(...confirmed)
     state.specRounds.push({ round, raised: found.length, confirmed: confirmed.length, what: confirmed.map((f) => f.claim) })
@@ -216,7 +218,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   // ── 5+6. Verify → Code Audit → Fix, until a round is clean ─────────────────
   const lensesFor = (t) => [
     ...Object.entries(P.CODE_LENSES).map(([k, ask]) => ({ key: k, ask: ask(BASE) })),
-    ...config.lenses.code,
+    ...config.lenses.code.map((l) => ({ ...l, ask: typeof l.ask === 'function' ? l.ask(BASE) : l.ask })),
   // An escalated small run gets every lens a full run would have had,
   // including the config's full-tier lenses.
   ].filter((l) => t.codeLenses.includes(l.key) || (l.tiers && l.tiers.includes(t.escalated ? 'full' : t.size)))
@@ -233,7 +235,12 @@ export async function run(ctx, { config, deps = realDeps }) {
 
     // Escalate on evidence: the diff, not setup's guess, says what this is.
     const up = escalate(T, await deps.facts(BASE, cwd, config), config)
-    if (up) { T = up.profile; lenses = lensesFor(T); state.size = 'small → full'; ctx.log(`#${a.issue} escalated: ${up.reasons.join(', ')}`) }
+    if (up) {
+      T = up.profile; lenses = lensesFor(T)
+      state.size = 'small → full'
+      state.why = `${state.why}; escalated on its diff: ${up.reasons.join(', ')}`
+      ctx.log(`#${a.issue} escalated: ${up.reasons.join(', ')}`)
+    }
     redStreak = gate && gate.ok ? 0 : redStreak + 1
     // A gate red twice running moves the fixer up to the strong model.
     if (redStreak >= 2 && T.build !== config.tiers.full.build) { T = { ...T, build: config.tiers.full.build }; ctx.log('the gate was red twice running — the fixer moves to the strong model') }
@@ -263,7 +270,8 @@ export async function run(ctx, { config, deps = realDeps }) {
         `${COMMON}\n\n${ticket}\n\n${P.auditAsk({ lensAsk: l.ask, specPath: spec.path, gateLine: gateLine(gate), sha: gate.sha, carried, tampered: gate.tampered, list: listFindings })}`,
         { label: `audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.think) },
       ))
-      if (res.missing.length) return handBack('Code Audit', `the ${res.missing.join(', ')} auditor could not finish`)
+      // What the last round confirmed was fixed but never re-audited.
+      if (res.missing.length) return handBack('Code Audit', `the ${res.missing.join(', ')} auditor could not finish`, [], open)
       const raised = [...res.reports.flatMap(findingsOf), ...redCheckFinding(lastRed, BASE)]
       minors = raised.filter((f) => f.severity === 'minor')
       open = await confirm(raised.filter((f) => f.severity === 'blocker'), 'the change', round)

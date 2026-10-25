@@ -123,13 +123,29 @@ jobs:
           name: handoff-claim
           path: .harness/handoff/
 
+      # Agents' code runs next. Without sudo it cannot read the runner's own
+      # memory or other users' files; the step fails closed if sudo survives.
+      # ADAPT: anything the gate needs installed must be installed above.
+      - name: Turn off sudo for the rest of the job
+        run: |
+          sudo sh -c 'rm -f /etc/sudoers.d/*'
+          for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
+          sudo -k
+          if sudo -n true 2>/dev/null; then echo "::error::sudo is still available; the build job must not have it"; exit 1; fi
+
+      # Global: the agents commit in the workspace, a repository of its own.
+      # The step ends by stopping anything the agents left running, before
+      # the upload steps start with the runner's job tokens in their env.
       - name: Build
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
-          git config user.name "harness[bot]"
-          git config user.email "harness@users.noreply.github.com"
-          node harness/bin/run.mjs ship "$ISSUE" --phase build
+          git config --global user.name "harness[bot]"
+          git config --global user.email "harness@users.noreply.github.com"
+          status=0
+          node harness/bin/run.mjs ship "$ISSUE" --phase build || status=$?
+          node harness/bin/reap.mjs
+          exit $status
 
       # Only this run's own files: the claim's are already in its artifact.
       - uses: actions/upload-artifact@v4

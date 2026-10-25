@@ -389,6 +389,72 @@ test('a spec blocker at a place already carried is not judged again', async () =
 
 test('a heavy-area ticket is not asked to write a spec in setup', async () => {
   const ctx = fakeCtx(SHIP_ARGS, script())
-  await run(ctx, { config: config({ sizing: { heavyAreas: ['harness', 'persistence'] } }), deps: deps() })
+  await run(ctx, { config: config({ sizing: { areas: { web: 'w', persistence: 'p', harness: 'h' }, heavyAreas: ['harness', 'persistence'] } }), deps: deps() })
   assert.match(ctx.calls[0].prompt, /none of these areas — harness, persistence/)
+})
+
+test('red rounds have two rounds of slack, then the run hands back', async () => {
+  let n = 0
+  const reds = [1, 2, 3, 4, 5].map(() => red({ failedTests: [{ test: `T#${++n}`, error: 'x' }] }))
+  const r = await run(fakeCtx(SHIP_ARGS, script()), { config: config(), deps: deps({ gates: reds }) })
+  assert.equal(r.outcome, 'handback')
+  assert.match(r.reason, /still not clean after 4 rounds/)
+})
+
+test('a finding that skips a round starts its streak again', async () => {
+  const a = blocker(), b = blocker({ line: 200, claim: 'another' })
+  // By round: a, b, a, b — never the same finding twice running, so never stuck.
+  const round = (label) => Number(/#(\d+)$/.exec(label)[1])
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:': (label) => ({ ...clean, findings: [round(label) % 2 ? a : b] }) }))
+  // Six rounds, so that without the reset `a` would reach three in a row by round five.
+  const r = await run(ctx, { config: config({ tiers: { full: { buildRounds: 6 } } }), deps: deps() })
+  assert.match(r.reason, /still not clean after 6 rounds/)
+})
+
+test('two red gates that are not consecutive keep the fixer on its model', async () => {
+  let audits = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++audits === 1 ? { ...clean, findings: [blocker()] } : clean) }))
+  await run(ctx, { config: config(), deps: deps({ gates: [red(), green(), red(), green()] }) })
+  const fixes = ctx.calls.filter((c) => c.label.startsWith('fix#'))
+  assert.equal(fixes.length, 3)
+  assert.ok(fixes.every((c) => c.opts.model === 'm-standard'))
+})
+
+test('the minors that go into the pull request face a skeptic too', async () => {
+  const minor = blocker({ severity: 'minor', claim: 'a log line says 410' })
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': { ...clean, findings: [minor] }, 'skeptic:': { refuted: true, why: 'it says 404' } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.ok(ctx.calls.some((c) => c.label.startsWith('skeptic:code:0#1-minor')))
+  assert.deepEqual(r.minors, [])
+})
+
+test('a dead auditor after a fix hands back with that fix listed as not re-verified', async () => {
+  let audits = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++audits === 1 ? { ...clean, findings: [blocker()] } : undefined) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.match(r.reason, /could not finish/)
+  assert.equal(r.alsoOpen.length, 1)
+})
+
+test('an escalated run says why in its sizing line', async () => {
+  const r = await run(fakeCtx(SHIP_ARGS, script()), { config: config(), deps: deps({ facts: { files: 3, appLines: 40, risky: ['pom.xml'], onlyDocs: false } }) })
+  assert.match(r.why, /escalated on its diff: the diff touches pom.xml/)
+})
+
+test('a new blocker on the line of a carried gap is still judged', async () => {
+  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no empty case' })
+  const replan = blocker({ category: 'logic', file: 'specs/7-x.md', line: 30, claim: 'wrong status' })
+  const logic = blocker({ category: 'logic', file: 'specs/7-x.md', line: 12, claim: 'the plan maps retired to 200' })
+  let n = 0
+  // Round 1 carries the gap and re-plans; round 2 raises a new problem on the gap's line.
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [gap, replan] } : { ...clean, findings: [gap, logic] }) }))
+  await run(ctx, { config: config(), deps: deps() })
+  assert.ok(ctx.calls.some((c) => c.label.startsWith('skeptic:spec') && /maps retired to 200/.test(c.prompt)))
+})
+
+test('an extra lens may be a function of the base ref', async () => {
+  const parity = { key: 'parity', tiers: ['full'], ask: (base) => `Compare with legacy against ${base}.` }
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
+  await run(ctx, { config: config({ lenses: { code: [parity], spec: [] } }), deps: deps() })
+  assert.match(ctx.calls.find((c) => c.label === 'audit:parity#1').prompt, /against origin\/main\./)
 })

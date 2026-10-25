@@ -14,7 +14,8 @@
 // environment of any process above it, so the only way to keep the GitHub
 // token from the agents is for no process in the build job to hold it.
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfig } from '../lib/config.mjs'
@@ -71,8 +72,11 @@ const GITHUB_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'HARNESS_GH_TOKEN', 'GH_ENTER
  * off git's credential helpers and prompts, so an ordinary `git push` fails.
  */
 export function copilotEnv(env) {
-  const out = { ...env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false', GIT_TERMINAL_PROMPT: '0' }
-  for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK']) delete out[k]
+  const out = { ...env, COPILOT_AUTO_UPDATE: 'false', GIT_TERMINAL_PROMPT: '0' }
+  // Never load the workspace's own .github/extensions: the branch's copy of
+  // the harness may have been edited by agents. The harness that runs is
+  // the staged one (stageHarness), loaded as a user extension.
+  for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK', 'GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS']) delete out[k]
   // ssh would still read a passphrase-less key from ~/.ssh by itself.
   out.GIT_SSH_COMMAND = 'ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityFile=/dev/null -o BatchMode=yes'
   // An empty credential.helper resets the helper list for every git call.
@@ -131,27 +135,56 @@ async function must(args, cwd, what) {
   return r.stdout.trim()
 }
 
+/**
+ * A copy of the root checkout's harness, as a Copilot *user* extension in a
+ * Copilot home of its own. Copilot then runs in the workspace — so agents'
+ * shells start in the tree they edit — while the loop, the limits and the
+ * gate come from the root (in Actions, the base branch). The workspace's own
+ * project extension is never loaded: headless, Copilot loads project
+ * extensions only with an opt-in that copilotEnv removes.
+ *
+ * The person's own Copilot home is linked in, minus its extensions, so a
+ * `copilot login` still signs the run in.
+ */
+export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedir(), '.copilot')) {
+  const stage = mkdtempSync(join(tmpdir(), 'harness-stage-'))
+  cpSync(join(root, 'harness'), join(stage, 'harness'), { recursive: true })
+  cpSync(join(root, 'harness.config.mjs'), join(stage, 'harness.config.mjs'))
+  const home = join(stage, 'home')
+  mkdirSync(join(home, 'extensions', 'harness'), { recursive: true })
+  // extension.mjs imports ../../../harness/: from home/extensions/harness/
+  // that is the stage, where the copy lives.
+  cpSync(join(root, '.github', 'extensions', 'harness', 'extension.mjs'), join(home, 'extensions', 'harness', 'extension.mjs'))
+  if (existsSync(own)) {
+    for (const entry of readdirSync(own)) if (entry !== 'extensions') symlinkSync(join(own, entry), join(home, entry))
+  }
+  return { home, cleanup: () => rmSync(stage, { recursive: true, force: true }) }
+}
+
 /** Run the workflow headless; the result file, or an error result. */
-function runCopilot(config, workflow, args, dir, cwd) {
+function runCopilot(root, config, workflow, args, dir, cwd) {
   const argsFile = join(dir, 'args.json'), resultFile = join(dir, 'result.json')
   writeFileSync(argsFile, JSON.stringify(args, null, 2))
   const argv = copilotArgv(config, workflow, argsFile, resultFile)
   console.error(`harness: ${config.copilot.bin} ${argv.map((x) => (/\s/.test(x) ? JSON.stringify(x) : x)).join(' ')}`)
+  const stage = stageHarness(root)
   return new Promise((done) => {
     const p = spawn(config.copilot.bin, argv, {
       cwd,
-      // Project extensions load headless only with the opt-in copilotEnv
-      // sets. It lets the checked-out .github/extensions code run, so only on
-      // trusted code.
-      env: copilotEnv(process.env),
+      env: { ...copilotEnv(process.env), COPILOT_HOME: stage.home },
       // npm installs copilot as a .cmd shim on Windows, which needs a shell.
       shell: process.platform === 'win32',
+      // Its own process group, so whatever the agents started can be
+      // stopped with it, before anything reads what the run left behind.
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
     })
     let out = ''
     p.stdout.on('data', (d) => { out += d; process.stderr.write(d) })
-    p.on('error', (e) => done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }))
+    p.on('error', (e) => { stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
     p.on('close', (code) => {
+      if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} }
+      stage.cleanup()
       writeFileSync(join(dir, 'stdout.jsonl'), out)
       const { status, usage } = readEvents(out)
       // Exit 0 is the only case where the result file is this run's; a
@@ -212,6 +245,9 @@ async function shipPrepare(opt, root, config) {
   const t = await GH.issue(opt.n, root)
   const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
   if (t.state !== 'OPEN') return skip(`#${opt.n} is ${t.state.toLowerCase()} — nothing to do`)
+  // A run that crashes still ends in publish, which removes the label; one
+  // still there means a run is in flight, and a second would race it.
+  if (t.labels.includes(L.working)) return skip(`#${opt.n} is already ${L.working} — a run is in flight; remove the label if it is not`)
   const base = config.base
   // Locally, today's base; in Actions the checkout fetched every branch.
   if (!CI) await must(['fetch', 'origin', base], root, `git fetch origin ${base}`)
@@ -230,10 +266,10 @@ async function shipPrepare(opt, root, config) {
   return state
 }
 
-// The agents work in a workspace under .harness/worktrees/; Copilot runs
-// from the root, so the harness that runs — its loops, limits and gate — is
-// the root checkout's, never what an earlier attempt's agents left on the
-// branch. In Actions the root is the base branch.
+// The agents work in a workspace under .harness/worktrees/, and Copilot runs
+// there; the harness that runs — its loops, limits and gate — is staged from
+// the root checkout (stageHarness), never what an earlier attempt's agents
+// left on the branch. In Actions the root is the base branch.
 const workspace = (root, name) => join(root, '.harness', 'worktrees', name)
 
 async function shipBuild(opt, root, config, state) {
@@ -251,10 +287,10 @@ async function shipBuild(opt, root, config, state) {
   if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
   const dir = runDir(root, `ship-${opt.n}`)
   const t = state.issue
-  const result = await runCopilot(config, 'harness-ship', {
+  const result = await runCopilot(root, config, 'harness-ship', {
     issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir,
     ...(state.notes ? { notes: state.notes } : {}), ...(state.size ? { size: state.size } : {}),
-  }, dir, root)
+  }, dir, workdir)
   result.issue ??= opt.n
   result.branch ??= branch
   result.title ??= t.title
@@ -284,8 +320,10 @@ async function shipPublish(opt, root, config, state, built) {
   if (built && built.bundle && built.bundle !== `ship-${n}.bundle`) throw new Error(`refusing an unexpected bundle name "${built.bundle}"`)
   // The build job timed out, was cancelled or lost its runner: say so, so
   // the ticket never sits claimed with nobody working on it.
-  const result = built ? built.result : { outcome: 'error', reason: 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which' }
-  result.issue ??= n
+  const result = built && built.result ? built.result : { outcome: 'error', reason: 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which' }
+  // The build result is the build job's account, and agents' code ran in
+  // that job: which issue, branch and title this is comes from the claim.
+  Object.assign(result, { issue: n, branch, title: state.issue && state.issue.title })
   if (result.outcome === 'declined' || result.outcome === 'error') {
     await GH.comment(n, shipIssueComment(result), root)
     await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
@@ -405,10 +443,10 @@ async function reviewBuild(opt, root, config, state) {
   const diff = await facts(`origin/${state.base}`, workdir, config)
   const size = reviewSize(diff, config, { labelledFull: state.labels.includes(config.github.labels.full) })
   const dir = runDir(root, `review-${opt.n}`)
-  const result = await runCopilot(config, 'harness-review', {
+  const result = await runCopilot(root, config, 'harness-review', {
     pr: opt.n, title: state.title, body: state.body, base: state.base, workdir, size,
     ...(state.ticket ? { ticket: state.ticket } : {}),
-  }, dir, root)
+  }, dir, workdir)
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
   writeHandoff(root, opt, 'build', { result })
   return result

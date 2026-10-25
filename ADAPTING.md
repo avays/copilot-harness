@@ -139,9 +139,8 @@ commands: {
       MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}
   ```
 
-  Copilot strips variables it considers sensitive from the extension process, which runs the gate. If the
-  gate can't authenticate, list the names in `copilot.extensionEnv`. *How that behaves headless hasn't
-  been verified (§9).*
+  In a probe on CLI 1.0.103 such variables reached the extension (which runs the gate) without further
+  setup. Only if the gate can't authenticate, list the names in `copilot.extensionEnv` (§9).
 
 ### `paths`
 
@@ -152,9 +151,11 @@ detection, escalation and review sizing all go quiet without an error. Doctor wa
 
 - **`source`**: app code; red-check reverts it. Leave out legacy code that tickets don't change.
 - **`tests`**: where tests live. Only test files under these paths count as the branch's tests.
-- **`risky`**: a small run whose diff touches one of these is escalated to the full loop. For a
-  migration, consider `persistence.xml`, `src/main/resources/application*.yml`, Flyway or Liquibase
-  folders, security configuration, `pom.xml`, and anything shared by the legacy and new code.
+- **`risky`**: a small run whose diff touches one of these is escalated to the full loop. They are
+  prefixes too, **with no globs**. For a migration, consider `src/main/resources/META-INF/persistence.xml`,
+  `src/main/resources/application` (which covers `application.yml` and `application-prod.yml`), the
+  Flyway or Liquibase folder, security configuration, every module's `pom.xml` (`pom.xml`, `app/pom.xml`),
+  and anything shared by the legacy and new code. Doctor flags an entry that matches no file.
 - **`lessons`**: where Learn writes. **Add this file to `instructions`**, or the lessons are never read.
 
 ### `tests`
@@ -219,7 +220,7 @@ their own config, so a failure here means you've changed the harness itself.
 
 | Secret or variable | What for | Required |
 | --- | --- | --- |
-| `COPILOT_GITHUB_TOKEN` (secret) | Copilot's model calls. A **fine-grained PAT owned by a person** (not an organisation) with the **Copilot Requests** account permission and **no repository access at all**. The agents' job holds this token, and an agent can read it, so it must be good for nothing but Copilot. Classic `ghp_` tokens are not supported | Yes |
+| `COPILOT_GITHUB_TOKEN` (secret) | Copilot's model calls. A **fine-grained PAT owned by a person** (not an organisation). Under *Repository access* choose **Public repositories** and grant no repository permissions; under *Account permissions* grant **Copilot Requests** only. The agents' job holds this token and an agent can read it, so it must be good for nothing but Copilot. Classic `ghp_` tokens are not supported | Yes |
 | `HARNESS_GH_TOKEN` (secret) | A PAT for the claim and publish jobs instead of `GITHUB_TOKEN` (contents, issues and pull requests: read and write). Pull requests and pushes made with `GITHUB_TOKEN` start no other workflows, so the project's CI won't run on them; the harness works around this only for its own review, by dispatching it. With a PAT, the project's CI does run on harness branches, and that CI runs code the agents wrote, with whatever secrets the project gives same-repository branches. Decide whether that is acceptable before you add one | No |
 | `COPILOT_CLI_VERSION` (variable) | Pins the Copilot CLI (default 1.0.103). Change it deliberately, then re-run §7's checks | No |
 
@@ -243,14 +244,14 @@ their own config, so a failure here means you've changed the harness itself.
 
 1. `node --test harness/test/*.test.mjs` — the harness's own tests, no network.
 2. `node harness/bin/doctor.mjs` — local readiness. Fix every ✗.
-3. `node harness/bin/doctor.mjs --live` — Copilot loads the extension from **this working tree** and runs
+3. `node harness/bin/doctor.mjs --live` — Copilot loads the harness staged from **this working tree** and runs
    `harness-ping`, a workflow that starts **no agents and costs no credits**. That proves the CLI starts,
    signs in, finds the extension and reads the config. It makes no model call, so it does **not** prove
    the token may make Copilot requests. Step 5 does.
-4. **Commit the harness and merge it into `base`**, and into the default branch if that's different.
-   Every run works in a branch made from `origin/<base>`, so a harness that only exists in your working
-   tree gives exit code 2 ("workflow not found"). GitHub only runs the setup workflow, and only fires the
-   `labeled` trigger, from the copy on the default branch.
+4. **Commit the harness and merge it into the default branch** (and into `base`, if that's different).
+   The Actions jobs check out the default branch, and it is that copy of the harness and its config that
+   runs. GitHub also only runs the setup workflow, and only fires the `labeled` trigger, from the default
+   branch. Locally, the harness that runs is the one in the checkout you run `run.mjs` from.
 5. **Actions → Harness · setup → Run workflow** — creates the labels and runs step 3 on a runner.
 6. **One tiny ticket, locally, without publishing:** `node harness/bin/run.mjs ship <n> --small --no-publish`.
    Pick a real but small change. Nothing is pushed, posted or labelled. Read its run folder
@@ -285,13 +286,15 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 78 tests
-  against a fake Copilot context.
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 91 tests
+  against a fake Copilot context, and five deliberate mutations of the loop each make one fail.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
   environment: with it, git hands out no stored credential, and workflow-file edits are detected.
-- **Copilot CLI loads the extension and runs a harness workflow headless**, with the command line and
-  environment `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it used (0 on
-  CLI 1.0.103).
+- **Copilot CLI loads the staged harness and runs a workflow headless**, with the command line,
+  environment and staging `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it
+  used (0 on CLI 1.0.103).
+- Staging, the reap of left-behind processes, and the agents' environment, by the same tests.
+
 **Checked by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
 definitions (`doctor --live` fails if registration does), and the workflow files pass
 [actionlint](https://github.com/rhysd/actionlint) (`actionlint .github/workflows/harness-*.yml`).
@@ -307,34 +310,51 @@ definitions (`doctor --live` fails if registration does), and the workflow files
 - **Structured output from the models you choose.** Copilot validates each agent's answer against the
   schema and re-asks twice. A model that keeps failing makes that agent return null, which the harness
   treats as "did not finish".
-- **Permission patterns.** Whether `--deny-tool` takes precedence over a broader `--allow-tool` isn't
-  documented, and shell rules match on the first subcommand, so a git alias might get round
-  `shell(git push)`. The harness doesn't rely on the deny list (see *Isolation* below). Check that an
-  agent *can* run `./mvnw` and `git commit`, and that nothing it needs is denied.
-- **`copilot.extensionEnv` headless.** Copilot asks the user before granting secrets to an extension, and
-  if they are refused the extension does not load at all: every workflow then fails with exit code 2,
-  "workflow not found". `doctor --live` shows it. Leave the list empty unless the gate truly needs one.
+- **Permission patterns.** Deny rules always beat allow rules (`copilot help permissions`), but shell
+  rules match on the first subcommand, so a git alias might get round `shell(git push)`. The harness
+  doesn't rely on the deny list (see *Isolation* below). Check that an agent *can* run `./mvnw` and
+  `git commit` in the workspace, and that nothing it needs is denied.
+- **Turning sudo off on the runner image.** The build job's step removes the sudoers entries and fails
+  the job if `sudo -n true` still works. If a runner image keeps sudo some other way, that step fails
+  closed: adapt it rather than delete it.
+- **`copilot.extensionEnv` headless.** In a probe on CLI 1.0.103, ordinary variables such as
+  `MAVEN_TOKEN` reached the extension without being asked for, and listing one still loaded headless. The
+  SDK documents `GITHUB_TOKEN` as stripped, and says a refused request stops the extension loading, so
+  every workflow would fail with exit code 2. Leave the list empty unless the gate can't authenticate,
+  and run `doctor --live` after changing it.
 
 **Isolation — what the agents can and cannot reach:**
 
-- **In Actions:** agents run in the build job. No step there is given a GitHub token, and the checkouts
-  keep no credentials. The job's own token is read-only (`contents: read`) and only the runner process
-  holds it. That matters because an agent can run arbitrary code (any test it writes runs), and on Linux
-  a process can read the environment of every process above it.
-- **Every job runs the base branch's harness.** The branch, or the pull request, is checked out
-  separately as the workspace the agents edit. So agents' changes to `harness/` or `harness.config.mjs`
-  can't change the loop, the round limits or the gate. Claiming and publishing never run branch code.
-  The agents' work crosses to publish as a git bundle, publish checks where it is going, and workflow
-  files are never pushed. The build job saves no cache other workflows could restore.
-- **So, with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone,** an agent that went wrong can spend Copilot
-  credits, read whatever the build job is given (a read-only package token, if you add one), and write
-  commits a person will review. Nothing more.
+- **Where the harness comes from.** `run.mjs` copies the harness from the checkout it runs in (in Actions,
+  the default branch) into a temporary Copilot home and loads it as a *user* extension. Copilot then runs
+  in the workspace — the branch, or the pull request, checked out under `.harness/worktrees/` — so the
+  agents' shells start in the tree they edit. Copilot never loads the workspace's own copy: headless, it
+  loads project extensions only with an opt-in the harness removes. So agents' edits to `harness/` or
+  `harness.config.mjs` on a branch can't change the loop, the limits or the gate of a later run.
+- **In Actions, the build job** is given no GitHub token in any step, its checkouts keep no credentials,
+  and sudo is switched off (verified) before the agents start. The step ends by killing every process
+  the agents left behind, before the upload steps start with the runner's job tokens in their
+  environment. The job saves no cache. Claiming and publishing are separate jobs that never run branch
+  code. The work crosses to publish as a git bundle, publish takes the issue, branch and title from the
+  claim (never from the build), checks where it is pushing, and never pushes a workflow file.
+- **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
+  spend Copilot credits; read anything the build job is given (a read-only package token, if you add
+  one); write commits a person will review; and **write the build job's report**. The report is the PR
+  body's *Checks* and audit table, and the hand-off file is written in a job where the agents' code ran.
+  The project's own CI on the pull request is the independent check, so make it a required status check.
+  A process that daemonises out of the Copilot process group and survives the reap could, in principle,
+  read the job's runtime tokens (artifact and cache upload) from a later step. Hosted runners give no
+  stronger boundary inside a job. If the tickets come from people you don't trust (a public repository),
+  run the build job in a container or VM of its own.
+- **Who can start a run.** Anyone who can label an issue (triage access) can ship it, and its body is the
+  agents' brief, so prompt injection arrives that way. Keep `ready-for-ai` to people who would review the
+  result.
 - **On a laptop there is no isolation.** Agents run as you. `run.mjs` removes GitHub tokens and the ssh
   agent from their environment, turns off git's credential helpers and points ssh at no key, so an
   ordinary `git push` fails over https and ssh alike. But code an agent writes can still read your stored
   credentials (`~/.config/gh/hosts.yml`, keychains, `~/.ssh`). Run real tickets in Actions. Locally, use
   a devcontainer, or a machine account with no push rights, if the tickets are not ones you would run
-  yourself. Locally the harness that runs is the one in the checkout you run `run.mjs` from.
+  yourself. Locally, the harness that runs is the one in the checkout you run `run.mjs` from.
 
 **Known limits:**
 

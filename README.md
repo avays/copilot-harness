@@ -56,8 +56,8 @@ These are why each piece exists. Keep them when you change the harness.
   The harness never restates them.
 - **AI never holds the GitHub token.** In Actions, ship and review are three jobs each. Claiming and
   publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
-  with no repository access. Every job runs the base branch's harness, and the branch is only the
-  workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
+  with no repository access, and runs with sudo off. Every job runs the default branch's harness,
+  and the branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
   pushed. On a laptop there is no such isolation (ADAPTING.md §9).
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.
@@ -76,6 +76,7 @@ These are why each piece exists. Keep them when you change the harness.
 | `harness/lib/github.mjs`, `publish.mjs` | GitHub reads and writes; PR and comment bodies |
 | `harness/bin/run.mjs` | The entry point: prepare → `copilot workflow run` → publish, in one go or one `--phase` at a time |
 | `harness/bin/doctor.mjs` | Readiness checks; `--live` runs the ping workflow |
+| `harness/bin/reap.mjs` | Ends the agents' step by stopping anything they left running |
 | `harness/templates/spec.md` | The spec shape |
 | `harness/test/` | Tests, run with a fake Copilot context and real git (no model, no network) |
 | `.github/extensions/harness/extension.mjs` | Registers the workflows with Copilot CLI |
@@ -101,7 +102,8 @@ output. In Actions that folder is uploaded as an artifact.
 Under the hood, `run.mjs` runs:
 
 ```bash
-GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS=true \
+# from the workspace, with the harness staged from the root as a user extension
+COPILOT_HOME=/tmp/harness-stage-…/home \
 copilot --experimental --allow-tool=read --allow-tool=write --allow-tool='shell(./mvnw:*)' … \
         --deny-tool='shell(git push)' --deny-tool='shell(gh:*)' \
         workflow run harness-ship --args @args.json --result-file result.json --output-format json
@@ -110,9 +112,10 @@ copilot --experimental --allow-tool=read --allow-tool=write --allow-tool='shell(
 ## What it costs
 
 Copilot reports what every run used (`workflow.run_settled` → AI credits and the number of agents), and
-the harness prints it at the foot of each PR and review comment. A small ticket uses about four to six
-agents (setup, implement, one or two auditors, the occasional skeptic and fixer). A full one uses
-fifteen or more. Measure a few of your own tickets before setting `copilot.limits`.
+the harness prints it at the foot of each PR and review comment. Expect, from the loop's shape rather
+than from measurement (no agent has run yet), at least three agents for a small ticket (setup,
+implement, one auditor), plus a skeptic per blocker and a fixer per round; a full ticket, fifteen or
+more. Measure a few of your own tickets before setting `copilot.limits`.
 
 ## Status
 

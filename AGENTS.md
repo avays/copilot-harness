@@ -14,8 +14,9 @@ describes. This file is for an agent changing the harness here; it is not copied
 - **The build phase never holds a GitHub token.** In Actions it is its own job, given only
   `COPILOT_GITHUB_TOKEN`. An agent can read the environment of any process above it, so stripping a token
   from Copilot's environment is not enough on its own. Don't give the build jobs a GitHub credential, and
-  never let a job that holds one run code from the branch: every job runs the base checkout's harness,
-  and the branch is only the workspace under `.harness/worktrees/`. The one credential a build job may
+  never let a job that holds one run code from the branch. The harness that runs is staged from the
+  root checkout (`stageHarness` in `run.mjs`) and loaded as a user extension; the branch is only the
+  workspace under `.harness/worktrees/`, where Copilot runs. The one credential a build job may
   get is a read-only package token for the gate (ADAPTING.md §4).
 - **Every `ctx.agent` call needs a unique label.** Copilot memoizes identical calls, so two calls with
   the same prompt and label share one agent. The tests check this.

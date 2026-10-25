@@ -61,3 +61,16 @@ test('a review blocker with no file still fails the review', async () => {
   const ctx = fakeCtx(ARGS, (l) => (l.startsWith('lens:') ? lensReport({ findings: [blocker({ file: '', line: undefined, category: 'criterion-unmet', claim: 'nothing satisfies criterion 2' })] }) : l.startsWith('skeptic:') ? { refuted: false, why: '' } : undefined))
   assert.equal((await run(ctx, { config: config() })).verdict, 'fail')
 })
+
+test('a review skeptic that dies refutes nothing', async () => {
+  const ctx = fakeCtx(ARGS, (l) => (l.startsWith('lens:') ? lensReport({ findings: [blocker()] }) : undefined))
+  assert.equal((await run(ctx, { config: config() })).verdict, 'fail')
+})
+
+test('a review runs an extra lens its tier lists by key', async () => {
+  const parity = { key: 'parity', ask: 'Compare with legacy.' }
+  const c = config({ lenses: { code: [parity], spec: [] }, tiers: { full: { codeLenses: ['criteria', 'rules', 'parity'] } } })
+  const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => (l.startsWith('lens:') ? lensReport() : undefined))
+  const r = await run(ctx, { config: c })
+  assert.ok(r.lenses.includes('parity'))
+})

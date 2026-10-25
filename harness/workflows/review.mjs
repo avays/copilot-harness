@@ -54,7 +54,11 @@ export async function run(ctx, { config }) {
     small: { keys: ['combined'], model: 'standard' },
     large: { keys: ['criteria', 'rules', 'tests'], model: 'strong' },
   }[a.size]
-  const extra = config.lenses.code.filter((l) => l.tiers && l.tiers.includes(a.size === 'large' ? 'full' : 'small'))
+  // An extra lens runs on the tier it names, or when that tier lists it by key.
+  const tier = a.size === 'large' ? 'full' : 'small'
+  const extra = config.lenses.code
+    .filter((l) => (l.tiers && l.tiers.includes(tier)) || (config.tiers[tier].codeLenses || []).includes(l.key))
+    .map((l) => ({ ...l, ask: typeof l.ask === 'function' ? l.ask(BASE) : l.ask }))
   const lenses = [...plan.keys.map((k) => ({ key: k, ask: LENSES[k](BASE) })), ...extra]
   const ticket = a.ticket
     ? `The pull request is for ticket #${a.ticket.number}: ${a.ticket.title}\n\n${a.ticket.body || ''}`

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { copilotArgv, copilotEnv, readEvents } from '../bin/run.mjs'
+import { copilotArgv, copilotEnv, readEvents, stageHarness } from '../bin/run.mjs'
 import { resolveConfig } from '../lib/config.mjs'
 import { dedupe, key } from '../lib/findings.mjs'
 import { failedTestsIn, gateFindings } from '../lib/gate.mjs'
@@ -148,7 +148,8 @@ test('the agents\' environment carries no GitHub token, only Copilot\'s own', ()
   assert.equal(env.GITHUB_TOKEN, undefined)
   assert.equal(env.HARNESS_GH_TOKEN, undefined)
   assert.equal(env.COPILOT_GITHUB_TOKEN, 'd')
-  assert.equal(env.GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, 'true')
+  // The workspace's own project extension must never load.
+  assert.equal(copilotEnv({ GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true' }).GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, undefined)
   assert.equal(env.PATH, '/bin')
 })
 
@@ -186,6 +187,44 @@ test('the project\'s own areas replace the defaults instead of joining them', ()
 })
 
 test('the config refuses a tier that would audit nothing', () => {
-  assert.throws(() => config({ tiers: { full: { specLenses: [] } } }), /spec rounds but no specLenses/)
+  assert.throws(() => config({ tiers: { full: { specLenses: [] } } }), /no specLenses/)
   assert.throws(() => config({ tiers: { small: { codeLenses: [] } } }), /no codeLenses/)
+})
+
+test('the staged harness is the root\'s, as a user extension, with the person\'s Copilot home linked in', async () => {
+  const { existsSync, lstatSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const own = mkdtempSync(join(tmpdir(), 'own-home-'))
+  writeFileSync(join(own, 'config.json'), '{}')
+  mkdirSync(join(own, 'extensions', 'something-else'), { recursive: true })
+  const root = resolve(import.meta.dirname, '../..')
+  const { home, cleanup } = stageHarness(root, own)
+  try {
+    const ext = join(home, 'extensions', 'harness', 'extension.mjs')
+    assert.ok(existsSync(ext))
+    // extension.mjs imports ../../../harness/ — that must be the staged copy.
+    assert.ok(existsSync(resolve(join(home, 'extensions', 'harness'), '../../../harness/lib/config.mjs')))
+    assert.ok(existsSync(resolve(join(home, 'extensions', 'harness'), '../../../harness.config.mjs')))
+    assert.ok(lstatSync(join(home, 'config.json')).isSymbolicLink())
+    assert.ok(!existsSync(join(home, 'extensions', 'something-else')), 'the person\'s own extensions are not loaded')
+    assert.equal(readFileSync(ext, 'utf8'), readFileSync(join(root, '.github/extensions/harness/extension.mjs'), 'utf8'))
+  } finally { cleanup() }
+  assert.ok(!existsSync(home))
+})
+
+test('reap kills what the step started, never its ancestors or what was running before it', async () => {
+  const { victims } = await import('../bin/reap.mjs')
+  // 1 init ← 10 runner (old) ← 20 step shell ← 30 reap; 40 daemon from before the step;
+  // 50 left behind by an agent (setsid, so its parent is 1); 60 another user's.
+  const parent = { 10: 1, 20: 10, 30: 20, 40: 1, 50: 1, 60: 1 }
+  const start = { 10: 100, 20: 500, 30: 900, 40: 50, 50: 700, 60: 800 }
+  const user = { 10: 1001, 20: 1001, 30: 1001, 40: 1001, 50: 1001, 60: 0 }
+  const kill = victims({ self: 30, me: 1001, pids: [10, 20, 30, 40, 50, 60], parentOf: (p) => parent[p] || 0, startOf: (p) => start[p], userOf: (p) => user[p] })
+  assert.deepEqual(kill, [50])
+})
+
+test('the config refuses a heavy area that is no area, and an ask that is neither text nor a function', () => {
+  assert.throws(() => config({ sizing: { areas: { web: 'w' }, heavyAreas: ['persistence'] } }), /heavyAreas names "persistence"/)
+  assert.throws(() => config({ lenses: { code: [{ key: 'parity', ask: 42 }], spec: [] } }), /needs a key and an ask/)
 })

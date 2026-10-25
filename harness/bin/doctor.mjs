@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { loadConfig } from '../lib/config.mjs'
 import { repoEnv } from '../lib/github.mjs'
-import { copilotArgv, copilotEnv, readEvents } from './run.mjs'
+import { copilotArgv, copilotEnv, readEvents, stageHarness } from './run.mjs'
 
 const live = process.argv.includes('--live')
 const results = []
@@ -30,7 +30,8 @@ let config = null
 try { config = await loadConfig(root); check('harness.config.mjs loads', true) } catch (e) { check('harness.config.mjs loads', false, e.message) }
 
 if (config) {
-  check('config.map is filled in', Boolean(config.map) && !/^TODO/.test(config.map), config.map ? 'still the TODO placeholder' : 'empty: every agent will re-learn the repo')
+  const mapOk = Boolean(config.map) && !/^TODO/.test(config.map)
+  check('config.map is filled in', mapOk, mapOk ? '' : config.map ? 'still the TODO placeholder' : 'empty: every agent will re-learn the repo')
   const found = config.instructions.filter((p) => existsSync(join(root, p)))
   check('project instructions exist', found.length > 0, found.length ? found.join(', ') : `none of ${config.instructions.join(', ')}`)
   for (const g of config.commands.gate) {
@@ -46,6 +47,10 @@ if (config) {
     const hits = tracked.filter((f) => config.paths[key].some((p) => f.startsWith(p))).length
     check(`paths.${key} matches tracked files`, hits > 0, hits ? `${hits} files` : `nothing under ${config.paths[key].join(', ')} — paths are prefixes from the repository root (a module is app/src/main/)`)
   }
+  // risky entries are prefixes too, with no globs: one that matches nothing
+  // can never escalate a run, and nothing else would say so.
+  const dead = config.paths.risky.filter((p) => !tracked.some((f) => f === p || f.startsWith(p)))
+  check('every paths.risky entry matches a tracked file', !dead.length, dead.length ? `no file under ${dead.join(', ')} (prefixes, no globs)` : '')
   check('red-check is configured', Boolean(config.commands.testsOnly), config.commands.testsOnly ? '' : 'commands.testsOnly is null: tests that prove nothing go unnoticed')
   check('the extension is present', existsSync(join(root, '.github/extensions/harness/extension.mjs')))
   check('the spec template is present', existsSync(join(root, 'harness/templates/spec.md')))
@@ -85,7 +90,10 @@ if (live && config && cop.status === 0) {
   const argv = copilotArgv(config, 'harness-ping', join(dir, 'args.json'), join(dir, 'result.json'))
   // ping takes no arguments.
   const i = argv.indexOf('--args'); argv.splice(i, 2)
-  const r = run(config.copilot.bin, argv, { cwd: root, env: copilotEnv(process.env), shell: process.platform === 'win32' })
+  // Staged and loaded as a user extension, exactly as run.mjs does.
+  const stage = stageHarness(root)
+  const r = run(config.copilot.bin, argv, { cwd: root, env: { ...copilotEnv(process.env), COPILOT_HOME: stage.home }, shell: process.platform === 'win32' })
+  stage.cleanup()
   const ok = r.status === 0 && existsSync(join(dir, 'result.json'))
   const { usage } = readEvents(r.stdout || '')
   const spent = usage ? ` · ${usage.aiCredits} AI credits, ${usage.subagents} agents` : ''

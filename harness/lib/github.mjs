@@ -65,12 +65,24 @@ export const markReady = (n, cwd) => gh(`pr ready ${Number(n)}`, { cwd })
 export const dispatch = (workflow, inputs, cwd) =>
   gh(`workflow run ${q(workflow)} ${Object.entries(inputs).map(([k, v]) => `-f ${q(`${k}=${v}`)}`).join(' ')}`, { cwd })
 
-/** One comment per pull request that each review updates, found by its marker. */
+// Who the token acts as. GITHUB_TOKEN cannot read /user; in Actions its
+// comments are github-actions[bot].
+async function whoami(cwd) {
+  const r = await sh('gh api user --jq .login', { cwd, env: await repoEnv(cwd) })
+  if (r.code === 0 && r.stdout.trim()) return r.stdout.trim()
+  return process.env.GITHUB_ACTIONS ? 'github-actions[bot]' : null
+}
+
+/** One comment per pull request that each review updates, found by its marker and author. */
 export async function upsertComment(n, marker, body, cwd) {
   // --paginate prints one JSON array per page; --jq flattens them to one
   // object per line, which parses whatever the page count.
-  const lines = await gh(`api repos/{owner}/{repo}/issues/${Number(n)}/comments --paginate --jq '.[] | {id, body}'`, { cwd })
-  const mine = lines.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((c) => String(c.body || '').includes(marker))
+  // The marker and the author: anyone can paste the marker into a comment,
+  // and the review must not be written into theirs.
+  const me = await whoami(cwd)
+  const lines = await gh(`api repos/{owner}/{repo}/issues/${Number(n)}/comments --paginate --jq '.[] | {id, body, login: .user.login}'`, { cwd })
+  const mine = lines.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    .find((c) => String(c.body || '').includes(marker) && (!me || c.login === me))
   if (!mine) return comment(n, body, cwd)
   return withBody(JSON.stringify({ body }), (f) => gh(`api -X PATCH repos/{owner}/{repo}/issues/comments/${mine.id} --input ${f}`, { cwd }))
 }

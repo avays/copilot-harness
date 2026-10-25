@@ -107,10 +107,24 @@ jobs:
           name: review-handoff-prepare
           path: .harness/handoff/
 
+      # Agents' code runs next. Without sudo it cannot read the runner's own
+      # memory or other users' files; the step fails closed if sudo survives.
+      # ADAPT: anything the gate needs installed must be installed above.
+      - name: Turn off sudo for the rest of the job
+        run: |
+          sudo sh -c 'rm -f /etc/sudoers.d/*'
+          for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
+          sudo -k
+          if sudo -n true 2>/dev/null; then echo "::error::sudo is still available; the build job must not have it"; exit 1; fi
+
       - name: Review
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-        run: node harness/bin/run.mjs review "$PR" --phase build
+        run: |
+          status=0
+          node harness/bin/run.mjs review "$PR" --phase build || status=$?
+          node harness/bin/reap.mjs
+          exit $status
 
       - uses: actions/upload-artifact@v4
         if: always()

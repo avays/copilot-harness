@@ -99,15 +99,21 @@ export function resolveConfig(user = {}) {
   for (const t of Object.values(c.tiers)) {
     for (const k of ['think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)
   }
-  for (const l of [...c.lenses.code, ...c.lenses.spec]) if (!l.key || !l.ask) problems.push('every extra lens needs a key and an ask')
+  for (const l of [...c.lenses.code, ...c.lenses.spec]) {
+    if (!l.key || !['string', 'function'].includes(typeof l.ask)) problems.push('every extra lens needs a key and an ask (a string, or a function of the base ref)')
+  }
+  // A heavy area that is not an area can never be reported, so its rule
+  // would never fire.
+  for (const h of c.sizing.heavyAreas) if (!(h in c.sizing.areas)) problems.push(`sizing.heavyAreas names "${h}", which sizing.areas does not define`)
   // A mistyped lens key would mean no auditor at all, and a run that reads
   // as audited clean.
   const known = { code: new Set([...BUILT_IN_LENSES.code, ...c.lenses.code.map((l) => l.key)]), spec: new Set([...BUILT_IN_LENSES.spec, ...c.lenses.spec.map((l) => l.key)]) }
   for (const [name, t] of Object.entries(c.tiers)) {
     for (const k of t.codeLenses || []) if (!known.code.has(k)) problems.push(`tiers.${name}.codeLenses names "${k}", which is no lens`)
     for (const k of t.specLenses || []) if (!known.spec.has(k)) problems.push(`tiers.${name}.specLenses names "${k}", which is no lens`)
-    // A round with no lens records an audit that never happened.
-    if (t.specRounds > 0 && !(t.specLenses || []).length) problems.push(`tiers.${name} has spec rounds but no specLenses`)
+    // A round with no lens records an audit that never happened — and
+    // sizing can add a spec round to any tier.
+    if (!(t.specLenses || []).length) problems.push(`tiers.${name} has no specLenses`)
     if (!(t.codeLenses || []).length) problems.push(`tiers.${name} has no codeLenses`)
   }
   if (problems.length) throw new Error(`harness.config.mjs: ${problems.join('; ')}`)
