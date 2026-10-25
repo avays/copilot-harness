@@ -52,7 +52,8 @@ export const issue = (n, cwd) =>
 // against `github-actions[bot]`, sometimes `app/…`. Compare them as one.
 export const sameLogin = (a, b) => {
   const n = (x) => String(x || '').toLowerCase().replace(/^app\//, '').replace(/\[bot\]$/, '')
-  return n(a) === n(b)
+  // Two unknown logins are not the same person.
+  return n(a) !== '' && n(a) === n(b)
 }
 
 export function lastHandBack(comments, marker, harness) {

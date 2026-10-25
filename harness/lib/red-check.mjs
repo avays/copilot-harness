@@ -59,6 +59,8 @@ export async function redCheck({ config, cwd, base, signal }) {
     const r = await sh(cmd, { cwd: dir, signal })
     // Stopped part-way says nothing about the base either way.
     if (r.stopped) return { checked: false, reason: 'the red-check was stopped before it finished' }
+    // 126/127: the command itself could not run, which says nothing either.
+    if (r.code === 126 || r.code === 127) return { checked: false, reason: `commands.testsOnly could not run (exit ${r.code}): ${tail(r.out, 3)}` }
     // A compile failure counts as failing on the base: a test that needs the
     // new code to compile cannot pass without it. So does a failing report
     // under an exit 0, as in the gate.

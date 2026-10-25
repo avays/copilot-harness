@@ -37,7 +37,9 @@ function reportFiles(dir, since) {
     const p = join(dir, String(name))
     // A second's slack: file times can trail the clock, and a fresh report
     // stamped a moment before `since` must not be missed.
-    if (p.endsWith('.xml') && statSync(p).mtimeMs >= since - 1000) out.push(p)
+    if (!p.endsWith('.xml')) continue
+    // A dangling link is no report; it must not crash the run.
+    try { if (statSync(p).mtimeMs >= since - 1000) out.push(p) } catch { /* unreadable */ }
   }
   return out
 }
@@ -98,13 +100,17 @@ export const gateLine = (g) =>
 /** A red gate → findings a fixer can aim at. None means nothing to aim at. */
 export function gateFindings(g) {
   const fix = 'make the gate green without editing, disabling or deleting a test that exists on the base'
-  if (g.failedTests.length) {
-    return g.failedTests.slice(0, 10).map((t) => ({
-      severity: 'blocker', category: 'gate', file: t.test, claim: `gate red: ${t.test}`, evidence: t.error, fix,
-    }))
-  }
   const red = g.steps.find((s) => !s.ok)
-  if (red) return [{ severity: 'blocker', category: 'gate', file: red.name, claim: `gate red: ${red.name} exited ${red.code}`, evidence: red.tail, fix }]
+  const step = red ? [{ severity: 'blocker', category: 'gate', file: red.name, claim: `gate red: ${red.name} exited ${red.code}`, evidence: red.tail, fix }] : []
+  if (g.failedTests.length) {
+    // A lenient test step can exit 0 and a later step still fail: name that
+    // step too, or the fixer spends a round on the tests alone. A first step
+    // that failed is the one that wrote the reports, so it adds nothing.
+    return [...g.failedTests.slice(0, 10).map((t) => ({
+      severity: 'blocker', category: 'gate', file: t.test, claim: `gate red: ${t.test}`, evidence: t.error, fix,
+    })), ...(g.steps.indexOf(red) > 0 ? step : [])]
+  }
+  if (red) return step
   if (g.dirty) return [{ severity: 'blocker', category: 'gate', file: 'git status', claim: 'the gate ran on uncommitted changes', evidence: 'git status --porcelain is not empty', fix: 'commit the changes that belong to the ticket and discard the rest' }]
   return []
 }

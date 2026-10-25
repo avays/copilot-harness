@@ -909,3 +909,16 @@ test('CDATA that mentions system-out neither invents nor hides a failure', () =>
   const real = '<testcase classname="C" name="r"><failure message="boom"><![CDATA[expected <system-out> to be empty]]></failure></testcase>'
   assert.deepEqual(failedTestsIn(real).map((f) => f.test), ['C#r'])
 })
+
+test('two unknown logins are not the same identity', async () => {
+  const { sameLogin } = await import('../lib/github.mjs')
+  assert.equal(sameLogin(undefined, null), false)
+  assert.equal(sameLogin('github-actions', 'github-actions[bot]'), true)
+})
+
+test('a lenient test step and a later red step are both named', () => {
+  const g = { steps: [{ name: 'test', ok: true, code: 0 }, { name: 'lint', ok: false, code: 1, tail: 'x' }], failedTests: [{ test: 'A#b', error: 'e' }], dirty: false }
+  assert.deepEqual(gateFindings(g).map((f) => f.claim), ['gate red: A#b', 'gate red: lint exited 1'])
+  const first = { steps: [{ name: 'test', ok: false, code: 1, tail: 'x' }], failedTests: [{ test: 'A#b', error: 'e' }], dirty: false }
+  assert.deepEqual(gateFindings(first).map((f) => f.claim), ['gate red: A#b'])
+})
