@@ -45,6 +45,7 @@ export function shipPrBody(r) {
     ].filter(Boolean).map((x) => `- ${x}`).join('\n'))
   }
   if (r.open && r.open.length) s.push(`## Still open\n\n${list(r.open)}`)
+  if (r.alsoOpen && r.alsoOpen.length) s.push(`## Also unresolved\n\nNot why it stopped, but the next run must settle these too:\n\n${list(r.alsoOpen)}`)
   if (r.minors && r.minors.length) s.push(`## Notes (minor, confirmed)\n\n${list(r.minors)}`)
   if (r.notVerified && r.notVerified.length) s.push(`## Not verified\n\n${r.notVerified.map((x) => `- ${x}`).join('\n')}`)
   if (r.lessons && r.lessons.length) s.push(`## Lessons recorded\n\n${r.lessons.map((l) => `- ${l.pattern} → ${l.proposal}`).join('\n')}`)
@@ -60,6 +61,7 @@ export function shipIssueComment(r, url) {
   if (r.outcome === 'pr') return `Pull request ready for review: ${url}`
   return `Handed back to a person: **${r.reason}**${url ? ` — draft: ${url}` : ''}.` +
     (r.open && r.open.length ? `\n\nStill open:\n${list(r.open)}` : '') +
+    (r.alsoOpen && r.alsoOpen.length ? `\n\nAlso unresolved:\n${list(r.alsoOpen)}` : '') +
     `\n\nAnswer here or fix the ticket, then label it again to continue on the same branch.`
 }
 

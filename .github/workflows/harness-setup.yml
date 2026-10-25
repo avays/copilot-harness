@@ -1,7 +1,8 @@
 ## Run once after adopting the harness, and again after changing its config:
-## creates the labels and proves the wiring end to end — Copilot loads the
-## extension and runs a workflow — without starting a single agent, so it
-## costs no AI credits.
+## creates the labels and checks the wiring — Copilot loads the extension and
+## runs a workflow — without starting a single agent, so it costs no AI
+## credits. It does not make a model call, so it cannot prove the token's
+## Copilot Requests permission; the first real ticket does that.
 name: "Harness · setup"
 
 on:
@@ -16,8 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      # ADAPT: keep these names in step with github.labels in harness.config.mjs.
+      # ADAPT: keep these names in step with github.labels in
+      # harness.config.mjs, and with the label in harness-ship.yml's `if`.
       - name: Create the labels
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,12 +40,15 @@ jobs:
         run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
 
       - name: Doctor
+        # bash, not the default `bash -e {0}`: with pipefail, doctor's exit
+        # code survives the pipe into tee.
+        shell: bash
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
-            echo "::error::No COPILOT_GITHUB_TOKEN secret — see ADAPTING.md §5"
+            echo "::error::No COPILOT_GITHUB_TOKEN secret — see ADAPTING.md §6"
             node harness/bin/doctor.mjs
             exit 1
           fi

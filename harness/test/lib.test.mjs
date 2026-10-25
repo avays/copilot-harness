@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { copilotArgv, readEvents } from '../bin/run.mjs'
+import { copilotArgv, copilotEnv, readEvents } from '../bin/run.mjs'
 import { resolveConfig } from '../lib/config.mjs'
 import { dedupe, key } from '../lib/findings.mjs'
 import { failedTestsIn, gateFindings } from '../lib/gate.mjs'
@@ -140,4 +140,21 @@ test('status and spend are read from the run\'s JSONL', () => {
   ].join('\n')
   assert.deepEqual(readEvents(out), { status: 'completed', usage: { subagents: 3, aiCredits: 1.25, elapsedMs: 95000 } })
   assert.deepEqual(readEvents(''), { status: null, usage: null })
+})
+
+test('the agents\' environment carries no GitHub token, only Copilot\'s own', () => {
+  const env = copilotEnv({ PATH: '/bin', GH_TOKEN: 'a', GITHUB_TOKEN: 'b', HARNESS_GH_TOKEN: 'c', COPILOT_GITHUB_TOKEN: 'd' })
+  assert.equal(env.GH_TOKEN, undefined)
+  assert.equal(env.GITHUB_TOKEN, undefined)
+  assert.equal(env.HARNESS_GH_TOKEN, undefined)
+  assert.equal(env.COPILOT_GITHUB_TOKEN, 'd')
+  assert.equal(env.GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS, 'true')
+  assert.equal(env.PATH, '/bin')
+})
+
+test('a draft lists why it stopped and what else is unresolved', () => {
+  const body = shipPrBody({ outcome: 'handback', issue: 7, reason: 'the ticket itself is in question', phase: 'Code Audit',
+    open: [blocker({ category: 'scope' })], alsoOpen: [blocker({ claim: 'off by one' })], rounds: [], specRounds: [] })
+  assert.match(body, /## Still open[\s\S]*scope/)
+  assert.match(body, /## Also unresolved[\s\S]*off by one/)
 })

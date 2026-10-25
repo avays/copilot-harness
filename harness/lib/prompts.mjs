@@ -115,12 +115,16 @@ export function specAuditAsk({ lensAsk, specPath }) {
 // is worse here than on a review comment: the fixer will obediently "fix"
 // correct code, and the next audit will flag the damage.
 export function skepticAsk({ f, where, base, specPath, list }) {
+  // A finding about the spec is about what the spec says, so "the spec shows
+  // it was deliberate" would refute every one of them.
+  const deliberate = where === 'the spec'
+    ? `or if the project's instructions show it was deliberate.`
+    : `or if the instructions or the spec (${specPath}) *as first committed* show it was deliberate. A later ` +
+      `edit to the spec does not make a missed criterion deliberate.`
   return `An auditor claims this ${f.severity === 'minor' ? 'minor problem' : 'blocker'} in ${where}. Try to ` +
     `REFUTE it. Open the cited file and line yourself. Refute if the line does not say what is claimed, if the ` +
     `behaviour is already on ${base}, if it is style rather than a defect, if its fix would contradict the ` +
-    `project's instructions, or if the instructions or the spec (${specPath}) *as first committed* show it was ` +
-    `deliberate. A later edit to the spec does not make a missed criterion deliberate. If you cannot tell, it ` +
-    `is NOT refuted.` +
+    `project's instructions, ${deliberate} If you cannot tell, it is NOT refuted.` +
     (f.also && f.also.length ? ` Several auditors read this place differently ("also" below): refute only if EVERY reading is wrong.` : '') +
     `\n\n${list([f])}`
 }

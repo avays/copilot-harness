@@ -44,3 +44,15 @@ test('a tiny review runs on the light model', async () => {
   await run(ctx, { config: config() })
   assert.equal(ctx.calls[0].opts.model, 'm-light')
 })
+
+test('a blocker is not swallowed by a minor another lens filed at the same place', async () => {
+  const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => {
+    if (l.startsWith('lens:criteria')) return lensReport({ findings: [blocker({ severity: 'minor', claim: 'naming' })] })
+    if (l.startsWith('lens:rules')) return lensReport({ findings: [blocker()] })
+    if (l.startsWith('lens:')) return lensReport()
+    if (l.startsWith('skeptic:')) return { refuted: false, why: '' }
+  })
+  const r = await run(ctx, { config: config() })
+  assert.equal(r.verdict, 'fail')
+  assert.equal(r.blockers.length, 1)
+})

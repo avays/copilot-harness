@@ -7,7 +7,7 @@
 ## limits are code (harness/workflows/ship.mjs).
 ##
 ## Needs: a COPILOT_GITHUB_TOKEN secret (fine-grained PAT, owned by a person,
-## with the "Copilot Requests" permission). ADAPTING.md §5 has the details.
+## with the "Copilot Requests" permission). ADAPTING.md §6 has the details.
 name: "Harness · ship"
 
 on:
@@ -23,12 +23,6 @@ on:
         required: false
         default: ""
 
-# One run per ticket. The claim swaps `ready-for-ai` for `ai-working`, which
-# fires `labeled` again; the job's `if` skips that one in seconds.
-concurrency:
-  group: harness-ship-${{ github.event.issue.number || inputs.issue }}
-  cancel-in-progress: false
-
 permissions:
   contents: write
   issues: write
@@ -37,16 +31,27 @@ permissions:
 
 jobs:
   ship:
+    # ADAPT: the label must match github.labels.ready in harness.config.mjs.
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-ai'
+    # One run per ticket, at the job level so only runs that pass the `if`
+    # join the group. At the workflow level every label event on the issue
+    # would join it, and a newer no-op could cancel the real run while it waits.
+    concurrency:
+      group: harness-ship-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # No token left in .git/config: the agents run git and must not be
+          # able to push. run.mjs authenticates through gh instead (below).
+          persist-credentials: false
 
-      # ADAPT: the project's own toolchain. The gate in harness.config.mjs
-      # runs here, so this must match what the project builds with.
+      # ADAPT: the project's own toolchain and JDK. The gate in
+      # harness.config.mjs runs here, so this must match what the project
+      # builds with.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -61,17 +66,23 @@ jobs:
       - name: Install Copilot CLI
         run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
 
-      - name: Commit as the harness
+      # git's credential helper asks gh, and gh needs GH_TOKEN — which
+      # run.mjs has and strips from the agents' environment.
+      - name: Commit as the harness, authenticate git through gh
+        env:
+          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
         run: |
+          gh auth setup-git
           git config user.name "harness[bot]"
           git config user.email "harness@users.noreply.github.com"
 
       - name: Ship
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-          # A PAT here lets the pull request trigger other workflows (CI) by
-          # itself; GITHUB_TOKEN works, and the review is started explicitly.
+          # A PAT lets the pull request start the project's other workflows
+          # (CI) by itself, and push changes to .github/workflows/.
           GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
+          HARNESS_USES_PAT: ${{ secrets.HARNESS_GH_TOKEN != '' }}
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
           SIZE: ${{ inputs.size }}
         run: node harness/bin/run.mjs ship "$ISSUE" ${SIZE:+--$SIZE}

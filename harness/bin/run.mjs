@@ -87,6 +87,17 @@ async function must(args, cwd, what) {
   return r.stdout.trim()
 }
 
+// Tokens the agents must never see. Copilot authenticates with
+// COPILOT_GITHUB_TOKEN, which it redacts itself; a GitHub token in an agent's
+// shell would let it push or write to GitHub on its own.
+const GITHUB_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'HARNESS_GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
+
+export function copilotEnv(env) {
+  const out = { ...env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false' }
+  for (const k of GITHUB_TOKENS) delete out[k]
+  return out
+}
+
 /** Run the workflow headless; the result file, or an error result. */
 function runCopilot(config, workflow, args, dir, cwd) {
   const argsFile = join(dir, 'args.json'), resultFile = join(dir, 'result.json')
@@ -96,9 +107,12 @@ function runCopilot(config, workflow, args, dir, cwd) {
   return new Promise((done) => {
     const p = spawn(config.copilot.bin, argv, {
       cwd,
-      // Project extensions load headless only with this opt-in. It lets the
-      // checked-out .github/extensions code run, so only on trusted code.
-      env: { ...process.env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false' },
+      // Project extensions load headless only with the opt-in copilotEnv
+      // sets. It lets the checked-out .github/extensions code run, so only on
+      // trusted code.
+      env: copilotEnv(process.env),
+      // npm installs copilot as a .cmd shim on Windows, which needs a shell.
+      shell: process.platform === 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
     })
     let out = ''
@@ -115,76 +129,137 @@ function runCopilot(config, workflow, args, dir, cwd) {
   })
 }
 
+/**
+ * Push what the run built. In Actions the checkout keeps no credentials
+ * (persist-credentials: false) and git authenticates through `gh auth
+ * setup-git`, which needs GH_TOKEN — present here, stripped from the agents'
+ * environment. So this can push, and nothing an agent runs can.
+ */
+async function push(workdir, branch) {
+  const r = await git(['push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: workdir })
+  if (r.code === 0) return
+  const why = /refusing to allow .* workflow/i.test(r.out)
+    ? 'the change edits .github/workflows/, which GITHUB_TOKEN may not push — set a HARNESS_GH_TOKEN with the workflow scope (ADAPTING.md §6)'
+    : r.out.trim().split('\n').slice(-3).join(' ')
+  throw new Error(`git push: ${why}`)
+}
+
+/**
+ * The branch for an issue: the one an earlier attempt pushed, if any, so a
+ * renamed ticket continues where it stopped instead of starting a second PR.
+ */
+async function branchFor(n, title, root) {
+  const heads = (await git(['ls-remote', '--heads', 'origin', `harness/${n}-*`], { cwd: root })).stdout
+  const found = heads.split('\n').map((l) => l.split('\trefs/heads/')[1]).filter(Boolean)
+  return { branch: found[0] || `harness/${n}-${slug(title)}`, onRemote: found.length > 0 }
+}
+
+/** The laptop workspace: a worktree per issue, reused only if it is the right one. */
+async function worktreeFor(root, workdir, branch, onRemote, base) {
+  await git(['worktree', 'prune'], { cwd: root })
+  if (existsSync(workdir)) {
+    const on = await must(['rev-parse', '--abbrev-ref', 'HEAD'], workdir, 'git rev-parse')
+    if (on !== branch) throw new Error(`${workdir} holds ${on}, not ${branch} — remove it (git worktree remove ${workdir}) and run again`)
+    if ((await git(['status', '--porcelain'], { cwd: workdir })).stdout.trim()) throw new Error(`${workdir} has uncommitted changes — commit or discard them first`)
+  } else {
+    const local = (await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: root })).code === 0
+    // A local branch from an earlier --no-publish run keeps its commits.
+    if (local) await must(['worktree', 'add', workdir, branch], root, 'git worktree add')
+    else await must(['worktree', 'add', '-b', branch, workdir, onRemote ? `origin/${branch}` : `origin/${base}`], root, 'git worktree add')
+  }
+  // Pick up what a CI attempt pushed since; refuse to rewrite diverged work.
+  if (onRemote) await must(['merge', '--ff-only', `origin/${branch}`], workdir, `git merge --ff-only origin/${branch} (the local branch has diverged from the pushed one)`)
+}
+
 // ── ship ─────────────────────────────────────────────────────────────────────
 async function ship(opt, root, config) {
   const L = config.github.labels
   const t = await GH.issue(opt.n, root)
   if (t.state !== 'OPEN') return console.error(`#${opt.n} is ${t.state.toLowerCase()} — nothing to do`)
-  const branch = `harness/${opt.n}-${slug(t.title)}`
-  const existing = await GH.openPrFor(branch, root)
-  if (existing && !existing.isDraft) return console.error(`#${opt.n} already has a ready pull request: ${existing.url}`)
-  // Claim it: the label swap is what stops a second run starting on it.
-  await GH.relabel(opt.n, { add: [L.working], remove: [L.ready, L.stuck, L.done] }, root)
-
-  // The workspace. In Actions the runner is the isolation; on a laptop a
-  // worktree keeps the person's own checkout untouched.
   const base = config.base
   await must(['fetch', 'origin', base], root, `git fetch origin ${base}`)
-  const onRemote = (await git(['ls-remote', '--exit-code', '--heads', 'origin', branch], { cwd: root })).code === 0
-  if (onRemote) await must(['fetch', 'origin', branch], root, `git fetch origin ${branch}`)
-  const from = onRemote ? `origin/${branch}` : `origin/${base}`
-  let workdir = root
-  if (CI) {
-    await must(['checkout', '-B', branch, from], root, 'git checkout')
-  } else {
-    workdir = join(root, '.harness', 'worktrees', `issue-${opt.n}`)
-    if (!existsSync(workdir)) await must(['worktree', 'add', '-B', branch, workdir, from], root, 'git worktree add')
+  const { branch, onRemote } = await branchFor(opt.n, t.title, root)
+  const existing = await GH.openPrFor(branch, root)
+  if (existing && !existing.isDraft) return console.error(`#${opt.n} already has a ready pull request: ${existing.url}`)
+  // Claim it: the label swap is what stops a second run starting on it. A
+  // --no-publish run writes nothing to GitHub, so it does not claim.
+  if (opt.publish) await GH.relabel(opt.n, { add: [L.working], remove: [L.ready, L.stuck, L.done] }, root)
+
+  // From here on, whatever goes wrong, the ticket must not be left looking
+  // claimed: a failure is said on the issue and handed to a person.
+  const fail = async (reason) => {
+    console.error(`harness: ${reason}`)
+    process.exitCode = 1
+    if (!opt.publish) return
+    await GH.comment(opt.n, shipIssueComment({ outcome: 'error', reason }), root).catch(() => {})
+    await GH.relabel(opt.n, { add: [L.stuck], remove: [L.working] }, root).catch(() => {})
   }
-  if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
 
-  const dir = runDir(root, `ship-${opt.n}`)
-  const result = await runCopilot(config, 'harness-ship', {
-    issue: opt.n, title: t.title, body: t.body || '', labels: t.labels, branch, base, workdir,
-    ...(opt.notes ? { notes: opt.notes } : {}), ...(opt.size ? { size: opt.size } : {}),
-  }, dir, workdir)
-  result.issue ??= opt.n
-  result.branch ??= branch
-  result.title ??= t.title
-  writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
-  console.error(`harness: ${result.outcome}${result.reason ? ` — ${result.reason}` : ''} (run folder ${dir})`)
-  if (!opt.publish) return result
+  let workdir = root, result
+  try {
+    if (onRemote) await must(['fetch', 'origin', branch], root, `git fetch origin ${branch}`)
+    // In Actions the runner is the isolation; on a laptop a worktree keeps
+    // the person's own checkout untouched.
+    if (CI) await must(['checkout', '-B', branch, onRemote ? `origin/${branch}` : `origin/${base}`], root, 'git checkout')
+    else await worktreeFor(root, workdir = join(root, '.harness', 'worktrees', `issue-${opt.n}`), branch, onRemote, base)
+    if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
 
-  if (result.outcome === 'declined' || result.outcome === 'error') {
-    await GH.comment(opt.n, shipIssueComment(result), root)
-    await GH.relabel(opt.n, { add: [L.stuck], remove: [L.working] }, root)
+    const dir = runDir(root, `ship-${opt.n}`)
+    result = await runCopilot(config, 'harness-ship', {
+      issue: opt.n, title: t.title, body: t.body || '', labels: t.labels, branch, base, workdir,
+      ...(opt.notes ? { notes: opt.notes } : {}), ...(opt.size ? { size: opt.size } : {}),
+    }, dir, workdir)
+    result.issue ??= opt.n
+    result.branch ??= branch
+    result.title ??= t.title
+    writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
+    console.error(`harness: ${result.outcome}${result.reason ? ` — ${result.reason}` : ''} (run folder ${dir})`)
+    if (!CI) console.error(`the worktree stays at ${workdir}; remove it with: git worktree remove ${workdir}`)
+    if (!opt.publish) return result
+    await publishShip(result, { root, workdir, base, branch, existing, config })
     return result
+  } catch (e) {
+    await fail(e.message)
+    return result
+  }
+}
+
+async function publishShip(result, { root, workdir, base, branch, existing, config }) {
+  const L = config.github.labels, n = result.issue
+  if (result.outcome === 'declined' || result.outcome === 'error') {
+    await GH.comment(n, shipIssueComment(result), root)
+    await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
+    return
   }
   // pr or handback: push what was built, and put it in front of a person.
   const ahead = Number(await must(['rev-list', '--count', `origin/${base}..HEAD`], workdir, 'git rev-list'))
+  // A "pull request" with nothing in it is not one.
+  if (ahead === 0 && result.outcome === 'pr') Object.assign(result, { outcome: 'handback', phase: 'PR', reason: 'the run finished with no commits to push' })
   let url = existing ? existing.url : ''
   if (ahead > 0) {
-    await must(['push', '-u', 'origin', `HEAD:refs/heads/${branch}`], workdir, 'git push')
+    await push(workdir, branch)
     const draft = result.outcome !== 'pr'
     const body = shipPrBody(result)
     if (existing) {
-      const n = Number(existing.url.split('/').pop())
-      await GH.editPr(n, body, root)
-      if (!draft && existing.isDraft) await GH.markReady(n, root)
+      await GH.editPr(Number(existing.url.split('/').pop()), body, root)
+      if (!draft && existing.isDraft) await GH.markReady(Number(existing.url.split('/').pop()), root)
     } else {
       url = await GH.createPr({ base, head: branch, title: shipTitle(result), body, draft }, root)
     }
     const prNumber = Number(url.trim().split('/').pop())
-    await GH.relabel(prNumber, { add: [draft ? L.stuck : L.done, ...(String(result.size).includes('full') ? [L.full] : [])] }, root)
+    await GH.relabel(prNumber, {
+      add: [draft ? L.stuck : L.done, ...(String(result.size).includes('full') ? [L.full] : [])],
+      remove: [draft ? L.done : L.stuck],
+    }, root)
     // A pull request opened with GITHUB_TOKEN starts no workflow by itself;
-    // workflow_dispatch is the documented exception.
-    if (!draft && CI && config.github.reviewWorkflow) {
+    // workflow_dispatch is the documented exception. With a PAT the PR's own
+    // event starts the review, and a dispatch would start a second one.
+    if (!draft && CI && config.github.reviewWorkflow && process.env.HARNESS_USES_PAT !== 'true') {
       await GH.dispatch(config.github.reviewWorkflow, { pr: prNumber }, root).catch((e) => console.error(`could not start the review: ${e.message}`))
     }
   }
-  await GH.comment(opt.n, shipIssueComment(result, url), root)
-  await GH.relabel(opt.n, { add: [result.outcome === 'pr' ? L.done : L.stuck], remove: [L.working] }, root)
-  if (!CI) console.error(`the worktree stays at ${workdir}; remove it with: git worktree remove ${workdir}`)
-  return result
+  await GH.comment(n, shipIssueComment(result, url), root)
+  await GH.relabel(n, { add: [result.outcome === 'pr' ? L.done : L.stuck], remove: [L.working] }, root)
 }
 
 // ── review ───────────────────────────────────────────────────────────────────
@@ -195,9 +270,18 @@ async function review(opt, root, config) {
   let workdir = root
   if (!CI) {
     workdir = join(root, '.harness', 'worktrees', `pr-${opt.n}`)
-    await must(['fetch', 'origin', `pull/${opt.n}/head`], root, 'git fetch pull request')
-    if (existsSync(workdir)) await must(['checkout', '--detach', 'FETCH_HEAD'], workdir, 'git checkout')
-    else await must(['worktree', 'add', '--detach', workdir, 'FETCH_HEAD'], root, 'git worktree add')
+    // A named ref, not FETCH_HEAD: FETCH_HEAD belongs to one worktree, so a
+    // second review could not see what the main checkout fetched.
+    const ref = `refs/harness/pr-${opt.n}`
+    await must(['fetch', '--force', 'origin', `pull/${opt.n}/head:${ref}`], root, 'git fetch pull request')
+    await git(['worktree', 'prune'], { cwd: root })
+    if (existsSync(workdir)) await must(['checkout', '--detach', ref], workdir, 'git checkout')
+    else await must(['worktree', 'add', '--detach', workdir, ref], root, 'git worktree add')
+  }
+  // A branch from before the harness was adopted has nothing to run. The
+  // review is advisory, so that is a notice, not a red check.
+  if (!existsSync(join(workdir, '.github', 'extensions', 'harness', 'extension.mjs'))) {
+    return console.error(`harness: #${opt.n}'s branch does not carry the harness — skipped (merge ${p.baseRefName} into it to review)`)
   }
   const diff = await facts(`origin/${p.baseRefName}`, workdir, config)
   const size = reviewSize(diff, config, { labelledFull: p.labels.includes(config.github.labels.full) })
@@ -211,8 +295,9 @@ async function review(opt, root, config) {
   }, dir, workdir)
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
   if (result.outcome === 'error') {
-    console.error(`harness: review failed — ${result.reason}`)
-    process.exitCode = 1
+    // Advisory: say so loudly in the log and the summary, but never block.
+    console.error(`::warning::harness review did not finish — ${result.reason}`)
+    if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, `Harness review did not finish: ${result.reason}\n`, { flag: 'a' })
     return result
   }
   const body = reviewComment(result)

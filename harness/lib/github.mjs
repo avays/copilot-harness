@@ -8,8 +8,22 @@ import { sh } from './exec.mjs'
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 
+// Pinned to the repository `origin` points at. Without a terminal, gh
+// prefers a remote named `upstream`, so a forked clone would otherwise read
+// the upstream's issues and open pull requests there.
+let pinned = null
+async function repoEnv(cwd) {
+  if (process.env.GH_REPO) return {}
+  if (pinned === null) {
+    const url = (await sh('git remote get-url origin', { cwd })).stdout.trim()
+    const m = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(url)
+    pinned = m ? m[1] : ''
+  }
+  return pinned ? { GH_REPO: pinned } : {}
+}
+
 async function gh(args, { cwd, json = false } = {}) {
-  const r = await sh(`gh ${args}`, { cwd })
+  const r = await sh(`gh ${args}`, { cwd, env: await repoEnv(cwd) })
   if (r.code !== 0) throw new Error(`gh ${args.split(' ')[0]} ${args.split(' ')[1] || ''} failed: ${r.stderr.trim() || r.stdout.trim()}`)
   return json ? JSON.parse(r.stdout || 'null') : r.stdout.trim()
 }
@@ -35,7 +49,7 @@ export const openPrFor = async (branch, cwd) =>
 
 /** Add and remove labels; a label that is already absent is not an error. */
 export async function relabel(n, { add = [], remove = [] }, cwd) {
-  for (const l of remove) await sh(`gh issue edit ${Number(n)} --remove-label ${q(l)}`, { cwd })
+  for (const l of remove) await sh(`gh issue edit ${Number(n)} --remove-label ${q(l)}`, { cwd, env: await repoEnv(cwd) })
   if (add.length) await gh(`issue edit ${Number(n)} ${add.map((l) => `--add-label ${q(l)}`).join(' ')}`, { cwd })
 }
 

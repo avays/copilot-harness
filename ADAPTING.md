@@ -44,6 +44,14 @@ and the project's `AGENTS.md` must stay its own. Link to this repository from th
 Add `.harness/` to the project's `.gitignore`. The harness writes its own ignore file there too, so this is
 belt and braces.
 
+Then edit the three workflow files where they say `ADAPT`:
+
+- **The JDK.** `actions/setup-java` defaults to Temurin 21 in `harness-ship.yml` and `harness-review.yml`.
+  A project still on 8, 11 or 17 would get a red gate on round one, and every ticket would be handed back.
+- **The label names**, if you change them. They live in three places that must agree:
+  `github.labels` in `harness.config.mjs`, the `if:` in `harness-ship.yml`, and the `gh label create`
+  lines in `harness-setup.yml`.
+
 **Check:** `node harness/bin/doctor.mjs` runs. It will list what is still to do.
 
 ## 3. Point the harness at the project's own instructions
@@ -117,6 +125,11 @@ commands: {
 
 ### `paths`
 
+Every path is a **prefix from the repository root**. In a multi-module build, write the module in:
+`app/src/main/`, not `src/main/`. With the wrong prefix nothing matches, and red-check, test-tampering
+detection, escalation and review sizing all go quiet without an error. Doctor warns when `source` or
+`tests` matches no tracked file.
+
 - **`source`**: app code; red-check reverts it. Leave out legacy code that tickets don't change.
 - **`tests`**: where tests live. Only test files under these paths count as the branch's tests.
 - **`risky`**: a small run whose diff touches one of these is escalated to the full loop. For a
@@ -187,7 +200,7 @@ their own config, so a failure here means you've changed the harness itself.
 | Secret or variable | What for | Required |
 | --- | --- | --- |
 | `COPILOT_GITHUB_TOKEN` (secret) | Copilot's model calls. A **fine-grained PAT owned by a person** (not an organisation) with the **Copilot Requests** account permission. Classic `ghp_` tokens are not supported | Yes |
-| `HARNESS_GH_TOKEN` (secret) | Lets the harness's pull requests start the project's other workflows (CI) by themselves. Without it the harness uses `GITHUB_TOKEN`, and ship starts the review workflow explicitly | No |
+| `HARNESS_GH_TOKEN` (secret) | A PAT used for pushes, pull requests and labels instead of `GITHUB_TOKEN`. Pull requests and pushes made with `GITHUB_TOKEN` start no other workflows, so the project's CI won't run on them; the harness works around this only for its own review, by dispatching it. A PAT is also the only way a ticket can change `.github/workflows/`, since `GITHUB_TOKEN` may not push those files (the PAT needs the `workflow` scope) | No |
 | `COPILOT_CLI_VERSION` (variable) | Pins the Copilot CLI (default 1.0.103). Change it deliberately, then re-run §7's checks | No |
 
 - Spend comes from the token owner's Copilot allowance. A dedicated account with its own seat
@@ -195,22 +208,35 @@ their own config, so a failure here means you've changed the harness itself.
 - Some write-ups describe running on the built-in `GITHUB_TOKEN` with a `copilot-requests: write`
   permission when the org enables "Copilot CLI billed to the organization". This hasn't been tried
   here. Test it on a branch before you rely on it.
-- Under *Settings → Actions → General*, allow Actions to **create pull requests**.
+- Without a `HARNESS_GH_TOKEN`, go to *Settings → Actions → General* and turn on **Allow GitHub Actions to
+  create and approve pull requests**. Many organisations have it off by default, and without it the run
+  fails at the very end, after the credits are spent. Doctor checks it when it can read the setting
+  (admin rights).
+- **Put Copilot's token in `COPILOT_GITHUB_TOKEN`, never in `GH_TOKEN` or `GITHUB_TOKEN`.** The harness
+  removes every GitHub token from the environment it starts Copilot in, so that agents can't push or write
+  to GitHub. A Copilot login carried only by `GH_TOKEN` would be removed too.
 
 ## 7. Prove it, cheapest first
 
 1. `node --test harness/test/*.test.mjs` — the harness's own tests, no network.
 2. `node harness/bin/doctor.mjs` — local readiness. Fix every ✗.
-3. `node harness/bin/doctor.mjs --live` — Copilot loads the extension and runs `harness-ping`, a
-   workflow that starts **no agents and costs no credits**. This proves the CLI, the token, the
-   extension and the config all work together.
-4. **Actions → Harness · setup → Run workflow** — creates the labels and runs step 3 on a runner.
-5. **One tiny ticket, locally, without publishing:** `node harness/bin/run.mjs ship <n> --small --no-publish`.
-   Pick a real but small change. Read its run folder (`.harness/runs/…/result.json`) and its worktree
-   (`.harness/worktrees/issue-<n>`): the spec, the commits, the rounds, the credits.
-6. **The same ticket in CI:** label it `ready-for-ai`. You get a pull request, or a draft with the
-   reason.
-7. A ticket that should go to the full loop: one labelled `ship:full`, or one that changes a business
+3. `node harness/bin/doctor.mjs --live` — Copilot loads the extension from **this working tree** and runs
+   `harness-ping`, a workflow that starts **no agents and costs no credits**. That proves the CLI starts,
+   signs in, finds the extension and reads the config. It makes no model call, so it does **not** prove
+   the token may make Copilot requests. Step 5 does.
+4. **Commit the harness and merge it into `base`**, and into the default branch if that's different.
+   Every run works in a branch made from `origin/<base>`, so a harness that only exists in your working
+   tree gives exit code 2 ("workflow not found"). GitHub only runs the setup workflow, and only fires the
+   `labeled` trigger, from the copy on the default branch.
+5. **Actions → Harness · setup → Run workflow** — creates the labels and runs step 3 on a runner.
+6. **One tiny ticket, locally, without publishing:** `node harness/bin/run.mjs ship <n> --small --no-publish`.
+   Pick a real but small change. Nothing is pushed, posted or labelled. Read its run folder
+   (`.harness/runs/…/result.json`) and its worktree (`.harness/worktrees/issue-<n>`): the spec, the
+   commits, the rounds, the credits.
+7. **The same ticket in CI:** label it `ready-for-ai`. You get a pull request, or a draft with the
+   reason. The run continues on the branch the local run made only if that branch was pushed;
+   otherwise it starts fresh.
+8. A ticket that should go to the full loop: one labelled `ship:full`, or one that changes a business
    rule.
 
 ## 8. Extending it
@@ -233,30 +259,35 @@ behaviour you change.
 
 ## 9. What is proved and what is not
 
-**Proved:**
+**Proved, and re-proved by a command you can run:**
 
-- The ship and review loops, including sizing, escalation, the skeptic, stuck detection, round limits,
-  red rounds, conflicts, extra lenses and Learn. Covered by 45 tests with a fake Copilot context.
-- The gate, red-check and base-sync, against a real git repository in the tests.
-- **Copilot CLI 1.0.103 loads the extension and runs a harness workflow headless** with the exact
-  command line `run.mjs` builds (`harness-ping`, run for real: it completed with 0 credits).
-- The three workflow definitions are accepted by the Copilot SDK's `defineWorkflow`.
+- The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 54 tests
+  against a fake Copilot context.
+- The gate, red-check and base-sync, against a real git repository, by the same tests.
+- **Copilot CLI loads the extension and runs a harness workflow headless**, with the command line and
+  token-stripped environment `run.mjs` uses. `doctor --live` runs `harness-ping`; on CLI 1.0.103 it
+  completed with 0 credits.
+
+**Checked once by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
+definitions. Nothing re-runs that check, but `doctor --live` fails if registration does.
 
 **Not yet proved — check these in §7:**
 
 - **A real `ship` or `review` run with agents.** No agent has run yet. Expect to tune prompts after the
   first few tickets.
+- **The token's Copilot Requests permission.** `--live` makes no model call; the first ticket does.
 - **Structured output from the models you choose.** Copilot validates each agent's answer against the
   schema and re-asks twice. A model that keeps failing makes that agent return null, which the harness
   treats as "did not finish".
 - **Permission patterns.** Whether `--deny-tool` takes precedence over a broader `--allow-tool` isn't
-  documented. The harness doesn't rely on it: agents are also told never to push, and the GitHub token
-  is never in their environment. But check that an agent can run `./mvnw` and `git commit`, and that
-  nothing else is denied that it needs.
+  documented, and shell rules match on the first subcommand, so a git alias might get round
+  `shell(git push)`. The harness doesn't rely on the deny list. Every GitHub token is removed from the
+  environment Copilot runs in, and in Actions the checkout keeps no credentials, so an agent's push has
+  nothing to authenticate with. Check that an agent *can* run `./mvnw` and `git commit`, and that
+  nothing it needs is denied.
 - **`copilot.extensionEnv` headless.** Copilot asks the user before granting secrets to an extension. With
   no one there to ask, it may deny them.
-- **`argsSchema` enforcement.** The SDK records it at definition time; the CLI validates it at
-  registration. A bad argument fails the run with exit code 2.
 
 **Known limits:**
 
@@ -264,15 +295,20 @@ behaviour you change.
   CLI and re-run §7 whenever you change it.
 - **The review runs the extension from the PR branch.** A PR that changes `harness/` runs its own
   version of the harness with the repository's Copilot token. Fork PRs are skipped for that reason.
-  Same-repo PRs are trusted, as any CI is.
-- **No resume in CI.** A run that stops (limit reached, runner lost) starts over when the issue is
-  relabelled. It continues on the same branch, so committed work is kept.
+  Same-repo PRs are trusted, as any CI is. A branch older than the harness is skipped with a notice.
+- **No resume in CI.** A run that stops before publishing (a Copilot limit, the job timeout, a lost
+  runner) leaves nothing pushed, so relabelling starts over. The job-timeout and lost-runner cases also
+  leave `ai-working` on the issue; remove it by hand. Any other failure is reported on the issue, which
+  is labelled `needs-human`. A run that published a draft continues on its branch, so that work is kept.
+- **Inside a CI run, the base is fetched once.** The agents' side has no credentials, so on a private
+  repository the per-round merge of the base uses the copy `run.mjs` fetched at the start.
 - **One ticket per run.** Several tickets run as several jobs. GitHub runs them in parallel, and each
   has its own runner.
+- **Windows:** use WSL or Git Bash. Gate commands and `gh` calls run through `bash`.
 
 ## Checklist
 
-- [ ] Files copied (§2); `.harness/` ignored
+- [ ] Files copied (§2); `.harness/` ignored; the workflows' JDK and label names match (§2)
 - [ ] `instructions` lists the project's own rule files, and the migration decisions are written down (§3)
 - [ ] `map` filled in (§3)
 - [ ] `commands.gate` runs green in a clean clone; `quick` is fast; `testsOnly` works (§4)
@@ -281,6 +317,7 @@ behaviour you change.
 - [ ] `sizing` describes this project's rules, data and contracts (§5)
 - [ ] A parity lens, if this is a migration (§5)
 - [ ] `COPILOT_GITHUB_TOKEN` secret; Actions may create PRs (§6)
-- [ ] The workflow files' `setup-java` matches the project's JDK (§2)
-- [ ] `doctor`, `doctor --live`, *Harness · setup* all green (§7)
+- [ ] `paths` are prefixes from the repository root, and doctor finds files under them (§4)
+- [ ] Without a `HARNESS_GH_TOKEN`: Actions may create pull requests (§6)
+- [ ] `doctor` and `doctor --live` green; the harness merged into `base`; *Harness · setup* green (§7)
 - [ ] One small ticket shipped locally with `--no-publish`, then in CI (§7)

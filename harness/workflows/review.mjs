@@ -76,14 +76,17 @@ export async function run(ctx, { config }) {
   const missing = lenses.filter((l, i) => !reports[i]).map((l) => l.key)
 
   ctx.phase('Verify')
-  const raised = dedupe(done.flatMap(findingsOf))
-  const judged = await ctx.parallel(raised.filter((f) => f.severity === 'blocker').map((f, i) => () =>
+  // Severity first, then one finding per place: deduping first let a minor
+  // filed at a place swallow a blocker another lens filed at the same place.
+  const all = done.flatMap(findingsOf)
+  const raised = dedupe(all.filter((f) => f.severity === 'blocker'))
+  const judged = await ctx.parallel(raised.map((f, i) => () =>
     ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.skepticAsk({ f, where: `pull request #${a.pr}`, base: BASE, specPath: 'the spec in the diff, if any', list: listFindings })}`,
       { label: `skeptic:${i}`, schema: REFUTATION, model: m(plan.model) },
     ).then((v) => (v && v.refuted ? null : f))))
   const blockers = judged.filter((f) => f !== null)
-  const minors = raised.filter((f) => f.severity === 'minor')
+  const minors = dedupe(all.filter((f) => f.severity === 'minor'))
 
   const confidence = missing.length || !done.length ? 'low' : LEVELS[Math.min(...done.map((r) => Math.max(0, LEVELS.indexOf(r.confidence))))]
   return {

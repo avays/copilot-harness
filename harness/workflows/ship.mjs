@@ -69,7 +69,39 @@ export async function run(ctx, { config, deps = realDeps }) {
   const m = (slot) => modelFor(config, slot)
 
   const state = { issue: a.issue, branch: a.branch, title: a.title, size: null, why: '', spec: null, built: null, specRounds: [], rounds: [], minors: [], lessons: [], notVerified: [] }
-  const handBack = (phase, reason, open = [], extra = {}) => ({ outcome: 'handback', phase, reason, open, ...state, ...extra })
+  // Everything any audit confirmed, across every loop — what Learn works from.
+  const history = []
+  let T = null, lastRed = null, learned = false
+
+  // What the loop did not prove, said plainly on the PR and on a draft alike:
+  // "not verified" is where a reviewer looks first.
+  const notVerified = () => [
+    ...(!(lastRed && lastRed.checked) ? [`no red-check ran — ${(lastRed && lastRed.reason) || 'the gate never went green'}`] : []),
+    ...(lastRed && lastRed.checked && !lastRed.failedOnBase ? ['the new tests also pass without the change (judged a refactor by the skeptic)'] : []),
+  ]
+
+  // What the audits kept catching is context the builder did not have. It
+  // goes into the docs on this branch, so reviewers see the lesson with the
+  // code. A run that could not converge is the one with the most to teach.
+  async function learn() {
+    if (learned || !config.learn.enabled || !history.length) return []
+    learned = true
+    ctx.phase('Learn')
+    const lesson = await ctx.agent(
+      `${COMMON}\n\n${P.learnAsk(config, history, listFindings)}`,
+      { label: 'learn', schema: LESSON, model: m(T ? T.think : 'standard') },
+    )
+    state.lessons = (lesson && Array.isArray(lesson.lessons) ? lesson.lessons : [])
+    return state.lessons
+  }
+
+  // `open` is why it stopped; `alsoOpen` is still unresolved but is not the
+  // reason — the next run must settle both, so the draft lists both.
+  async function handBack(phase, reason, open = [], alsoOpen = []) {
+    ctx.log(`handing #${a.issue} back at ${phase}: ${reason}`)
+    await learn()
+    return { outcome: 'handback', phase, reason, open, alsoOpen, ...state, notVerified: notVerified() }
+  }
 
   // ── 1. Setup ───────────────────────────────────────────────────────────────
   ctx.phase('Setup')
@@ -84,7 +116,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   if (!setup.proceed) return { outcome: 'declined', issue: a.issue, reason: setup.reason, branch: a.branch }
   if (!Array.isArray(setup.doneWhen) || !setup.doneWhen.length) return handBack('Setup', 'setup found no Done-when criteria in the ticket')
 
-  let T = chooseProfile({ forced, facts: setup.sizing, config, labelledFull })
+  T = chooseProfile({ forced, facts: setup.sizing, config, labelledFull })
   // A spec setup wrote for a ticket that sized full is still a spec — but a
   // full ticket gets its own spec writer on the strong model.
   if (T.size !== 'small') setup.spec = null
@@ -95,7 +127,7 @@ export async function run(ctx, { config, deps = realDeps }) {
 
   // ── 2. Spec ────────────────────────────────────────────────────────────────
   ctx.phase('Spec')
-  const spec = setup.spec && setup.spec.path ? setup.spec : await ctx.agent(
+  let spec = setup.spec && setup.spec.path ? setup.spec : await ctx.agent(
     `${COMMON}\n\n${ticket}\n\n${P.specAsk(config, specPath)}`,
     { label: 'write-spec', schema: SPEC_WRITTEN, model: m(T.think) },
   )
@@ -127,7 +159,6 @@ export async function run(ctx, { config, deps = realDeps }) {
     ...Object.entries(P.SPEC_LENSES).map(([k, ask]) => ({ key: k, ask })),
     ...config.lenses.spec,
   ].filter((l) => T.specLenses.includes(l.key) || (l.tiers && l.tiers.includes(T.size)))
-  const history = []
   let carried = []
   for (let round = 1; round <= T.specRounds; round++) {
     ctx.phase('Spec Audit')
@@ -147,15 +178,19 @@ export async function run(ctx, { config, deps = realDeps }) {
     if (!replan.length) break
     // A person is needed only when the ticket itself is in question.
     if (round === T.specRounds && replan.some((f) => f.category === 'scope')) {
-      return handBack('Spec Audit', `the ticket itself is in question after ${round} spec rounds`, replan)
+      return handBack('Spec Audit', `the ticket itself is in question after ${round} spec rounds`,
+        replan.filter((f) => f.category === 'scope'), replan.filter((f) => f.category !== 'scope'))
     }
     const revised = await ctx.agent(
       `${COMMON}\n\n${ticket}\n\nIndependent auditors confirmed these problems with ${spec.path}:\n\n${listFindings(replan)}\n\n` +
-      `Revise the spec to resolve each one. A technical question the ticket does not settle is yours to decide: ` +
-      `decide it and record it under *Decisions*. Commit ("docs(spec): …").`,
+      `Revise the spec to resolve each one — or, if the ticket itself is wrong, record that under *Decisions*. ` +
+      `A technical question the ticket does not settle is yours to decide: decide it and record it under ` +
+      `*Decisions*. Commit ("docs(spec): …").`,
       { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(T.think) },
     )
     if (!revised) return handBack('Spec Audit', 'the spec reviser did not finish', replan)
+    // The revision's decisions are the ones the reviewer must answer.
+    spec = state.spec = { ...spec, ...revised, path: spec.path }
     // Anything still open after the last round is the builder's to resolve,
     // and the code audit checks that it did.
     if (round === T.specRounds) { carried.push(...replan); break }
@@ -174,10 +209,12 @@ export async function run(ctx, { config, deps = realDeps }) {
   const lensesFor = (t) => [
     ...Object.entries(P.CODE_LENSES).map(([k, ask]) => ({ key: k, ask: ask(BASE) })),
     ...config.lenses.code,
-  ].filter((l) => t.codeLenses.includes(l.key) || (l.tiers && l.tiers.includes(t.size)))
+  // An escalated small run gets every lens a full run would have had,
+  // including the config's full-tier lenses.
+  ].filter((l) => t.codeLenses.includes(l.key) || (l.tiers && l.tiers.includes(t.escalated ? 'full' : t.size)))
   let lenses = lensesFor(T)
   const streak = new Map()
-  let audited = 0, redStreak = 0, gate = null, lastRed = null, open = [], minors = []
+  let audited = 0, redStreak = 0, gate = null, open = [], minors = []
 
   for (let round = 1; ; round++) {
     ctx.phase('Verify')
@@ -237,7 +274,9 @@ export async function run(ctx, { config, deps = realDeps }) {
     for (const k of roundKeys) streak.set(k, (streak.get(k) || 0) + 1)
     for (const k of [...streak.keys()]) if (!roundKeys.has(k)) streak.delete(k)
     const stuck = open.filter((f) => streak.get(key(f)) > STUCK_AFTER)
-    if (open.some((f) => f.category === 'scope')) return handBack('Code Audit', 'the ticket itself is in question', open.filter((f) => f.category === 'scope'))
+    if (open.some((f) => f.category === 'scope')) {
+      return handBack('Code Audit', 'the ticket itself is in question', open.filter((f) => f.category === 'scope'), open.filter((f) => f.category !== 'scope'))
+    }
     if (stuck.length) return handBack('Code Audit', `the same finding survived ${STUCK_AFTER} fix attempts`, open)
     if (audited >= T.buildRounds || round >= T.buildRounds + 2) return handBack('Code Audit', `still not clean after ${round} rounds`, open)
 
@@ -249,31 +288,15 @@ export async function run(ctx, { config, deps = realDeps }) {
   }
 
   // ── 7. Learn ───────────────────────────────────────────────────────────────
-  // What the audits kept catching is context the builder did not have. It
-  // goes into the docs on this branch, so reviewers see the lesson with the code.
-  if (config.learn.enabled && history.length) {
-    ctx.phase('Learn')
-    const lesson = await ctx.agent(
-      `${COMMON}\n\n${P.learnAsk(config, history, listFindings)}`,
-      { label: 'learn', schema: LESSON, model: m(T.think) },
-    )
-    state.lessons = (lesson && lesson.lessons) || []
-    // Learn edits docs after the last green gate: re-run it, so the pull
-    // request never carries a commit nothing checked.
-    if (state.lessons.length) {
-      gate = await deps.gate({ config, cwd, base: BASE, signal: ctx.signal })
-      if (!gate.ok) return handBack('Learn', `the gate went red after the lessons commit: ${gateLine(gate)}`, gateFindings(gate))
-    }
+  // Learn edits docs after the last green gate: re-run it, so the pull
+  // request never carries a commit nothing checked.
+  if ((await learn()).length) {
+    gate = await deps.gate({ config, cwd, base: BASE, signal: ctx.signal })
+    if (!gate.ok) return handBack('Learn', `the gate went red after the lessons commit: ${gateLine(gate)}`, gateFindings(gate))
   }
 
-  // What the loop did not prove, said plainly: "not verified" is where a
-  // reviewer looks first.
-  state.notVerified = [
-    ...(!(lastRed && lastRed.checked) ? [`no red-check ran — ${(lastRed && lastRed.reason) || 'it could not'}`] : []),
-    ...(lastRed && lastRed.checked && !lastRed.failedOnBase ? ['the new tests also pass without the change (judged a refactor by the skeptic)'] : []),
-  ]
   return {
-    outcome: 'pr', ...state,
+    outcome: 'pr', ...state, notVerified: notVerified(),
     gate: { line: gateLine(gate), sha: gate.sha },
     redCheck: lastRed && lastRed.checked ? { failedOnBase: lastRed.failedOnBase, tests: lastRed.tests } : null,
     doneWhen: setup.doneWhen,

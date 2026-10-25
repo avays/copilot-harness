@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { loadConfig } from '../lib/config.mjs'
-import { copilotArgv } from './run.mjs'
+import { copilotArgv, copilotEnv } from './run.mjs'
 
 const live = process.argv.includes('--live')
 const results = []
@@ -34,6 +34,14 @@ if (config) {
     const ok = bin.startsWith('./') ? existsSync(join(root, bin)) : run('bash', ['-c', `command -v ${bin}`]).status === 0
     check(`gate command "${g.name}" can start`, ok, bin)
   }
+  // Paths are prefixes from the repository root. A multi-module layout
+  // (app/src/main/…) with the defaults (src/main/) matches nothing, and red-check,
+  // tamper detection, escalation and review sizing all go quiet without a word.
+  const tracked = run('git', ['ls-files'], { cwd: root }).stdout.split('\n')
+  for (const key of ['source', 'tests']) {
+    const hits = tracked.filter((f) => config.paths[key].some((p) => f.startsWith(p))).length
+    check(`paths.${key} matches tracked files`, hits > 0, hits ? `${hits} files` : `nothing under ${config.paths[key].join(', ')} — paths are prefixes from the repository root (a module is app/src/main/)`)
+  }
   check('red-check is configured', Boolean(config.commands.testsOnly), config.commands.testsOnly ? '' : 'commands.testsOnly is null: tests that prove nothing go unnoticed')
   check('the extension is present', existsSync(join(root, '.github/extensions/harness/extension.mjs')))
   check('the spec template is present', existsSync(join(root, 'harness/templates/spec.md')))
@@ -41,12 +49,14 @@ if (config) {
   check('no TODOs left in harness.config.mjs', !todo, todo ? `${todo.length} left` : '')
 }
 
-const cop = run(config ? config.copilot.bin : 'copilot', ['--version'])
+const cop = run(config ? config.copilot.bin : 'copilot', ['--version'], { shell: process.platform === 'win32' })
 check('Copilot CLI is installed', cop.status === 0, cop.status === 0 ? cop.stdout.trim().split('\n')[0] : 'npm install -g @github/copilot')
 const ghAuth = run('gh', ['auth', 'status'])
 check('gh is signed in', ghAuth.status === 0, ghAuth.status === 0 ? '' : 'gh auth login, or GH_TOKEN in CI')
-check('a Copilot token is available', Boolean(process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN) || existsSync(join(process.env.HOME || '', '.copilot')),
-  'COPILOT_GITHUB_TOKEN in CI; `copilot login` on a laptop')
+// Presence only: whether the token may make Copilot requests is proved by
+// the first agent call, which --live does not make.
+check('something Copilot can sign in with', Boolean(process.env.COPILOT_GITHUB_TOKEN) || existsSync(join(process.env.HOME || '', '.copilot')) || ghAuth.status === 0,
+  process.env.COPILOT_GITHUB_TOKEN ? 'COPILOT_GITHUB_TOKEN is set' : ghAuth.status === 0 ? 'a gh sign-in' : 'COPILOT_GITHUB_TOKEN in CI; `copilot login` on a laptop')
 
 if (config) {
   const labels = run('gh', ['label', 'list', '--limit', '200', '--json', 'name', '--jq', '.[].name'], { cwd: root })
@@ -55,6 +65,13 @@ if (config) {
     const missing = Object.values(config.github.labels).filter((l) => !have.has(l))
     check('the harness labels exist', !missing.length, missing.length ? `missing ${missing.join(', ')} — run the "Harness · setup" workflow` : '')
   }
+  // Opening a pull request with GITHUB_TOKEN needs this repository setting.
+  // Reading it needs admin rights, so an unreadable answer is not a failure.
+  const perms = run('gh', ['api', 'repos/{owner}/{repo}/actions/permissions/workflow', '--jq', '.can_approve_pull_request_reviews'], { cwd: root })
+  if (perms.status === 0) {
+    check('Actions may create pull requests', perms.stdout.trim() === 'true',
+      perms.stdout.trim() === 'true' ? '' : 'Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests" (or set HARNESS_GH_TOKEN)')
+  }
 }
 
 if (live && config && cop.status === 0) {
@@ -62,7 +79,7 @@ if (live && config && cop.status === 0) {
   const argv = copilotArgv(config, 'harness-ping', join(dir, 'args.json'), join(dir, 'result.json'))
   // ping takes no arguments.
   const i = argv.indexOf('--args'); argv.splice(i, 2)
-  const r = run(config.copilot.bin, argv, { cwd: root, env: { ...process.env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false' } })
+  const r = run(config.copilot.bin, argv, { cwd: root, env: copilotEnv(process.env), shell: process.platform === 'win32' })
   const ok = r.status === 0 && existsSync(join(dir, 'result.json'))
   check('copilot workflow run harness-ping', ok, ok ? readFileSync(join(dir, 'result.json'), 'utf8').replace(/\s+/g, ' ').slice(0, 200)
     : `exit ${r.status}: ${(r.stderr || r.stdout || '').trim().split('\n').slice(-3).join(' | ')}`)
@@ -72,4 +89,4 @@ for (const r of results) console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.detai
 const failed = results.filter((r) => !r.ok).length
 console.log(failed ? `\n${failed} to fix. ADAPTING.md says how.` : '\nReady.')
 process.exitCode = failed ? 1 : 0
-if (!live && !failed) console.log('Next: node harness/bin/doctor.mjs --live  (runs a no-agent workflow: proves auth and the extension, costs no credits)')
+if (!live && !failed) console.log('Next: node harness/bin/doctor.mjs --live  (runs a no-agent workflow in this working tree: Copilot loads the extension and the config; costs no credits)')

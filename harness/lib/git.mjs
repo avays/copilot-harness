@@ -26,6 +26,9 @@ export async function nameStatus(base, cwd) {
 export async function syncBase(base, cwd) {
   const remote = base.includes('/') ? base.split('/')[0] : 'origin'
   const branch = base.includes('/') ? base.split('/').slice(1).join('/') : base
+  // Inside a CI run the agents' side has no credentials, so on a private
+  // repository this fetch fails and the merge uses the base as run.mjs
+  // fetched it at the start. That is still today's base, give or take a run.
   await git(['fetch', remote, branch], { cwd })
   const ref = `${remote}/${branch}`
   const m = await git(['merge', '--no-edit', ref], { cwd })

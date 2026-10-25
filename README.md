@@ -55,7 +55,9 @@ These are why each piece exists. Keep them when you change the harness.
 - **The project's rules stay the project's.** Agents are pointed at your existing instruction files.
   The harness never restates them.
 - **AI never holds the GitHub token.** The Copilot workflow commits locally. `run.mjs` pushes and
-  talks to GitHub, before and after.
+  talks to GitHub, before and after. Every GitHub token is removed from the environment Copilot
+  starts in, and in Actions the checkout keeps no credentials. Git authenticates through `gh`, which
+  only `run.mjs` can use.
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.
 
@@ -83,14 +85,15 @@ These are why each piece exists. Keep them when you change the harness.
 ```bash
 node harness/bin/doctor.mjs            # is this checkout ready?
 node harness/bin/doctor.mjs --live     # runs harness-ping in Copilot: no agents, no AI credits
-node harness/bin/run.mjs ship 42 --no-publish   # a full local run, nothing pushed or posted
+node harness/bin/run.mjs ship 42 --no-publish   # a full local run: nothing pushed, posted or labelled
 node harness/bin/run.mjs ship 42                # claim, build, open the PR
 node harness/bin/run.mjs review 57
-node --test harness/test/*.test.mjs   # the harness's own tests, under ten seconds
+node --test harness/test/*.test.mjs   # the harness's own tests, about a second
 ```
 
 On a laptop, each ticket gets a git worktree under `.harness/worktrees/`, so your own checkout is never
-touched. Every run keeps a folder in `.harness/runs/` with its arguments, result and Copilot's JSONL
+touched. It runs on macOS and Linux. On Windows, use WSL or Git Bash, because gate commands and `gh`
+calls run through `bash`. Every run keeps a folder in `.harness/runs/` with its arguments, result and Copilot's JSONL
 output. In Actions that folder is uploaded as an artifact.
 
 Under the hood, `run.mjs` runs:

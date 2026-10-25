@@ -217,3 +217,64 @@ test('every agent is told to read the project instructions and never to push', a
     assert.match(c.prompt, /Never push/)
   }
 })
+
+test('red rounds spend no audit budget: red, then a blocker, then clean still ships a small ticket', async () => {
+  let audits = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++audits === 1 ? { ...clean, findings: [blocker()] } : clean) }))
+  const r = await run(ctx, { config: config(), deps: deps({ gates: [red(), green()] }) })
+  assert.equal(r.outcome, 'pr')
+  assert.equal(r.rounds.length, 3)
+  uniqueLabels(ctx)
+})
+
+test('a ticket in question after the last spec round hands back, keeping the technical findings too', async () => {
+  const scope = blocker({ category: 'scope', file: 'specs/7-x.md', line: 1, claim: 'the ticket asks for 404 and 410' })
+  const logic = blocker({ category: 'logic', file: 'specs/7-x.md', line: 20, claim: 'the plan never maps the retired state' })
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [scope, logic] } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.equal(r.phase, 'Spec Audit')
+  assert.deepEqual(r.open.map((f) => f.category), ['scope'])
+  assert.deepEqual(r.alsoOpen.map((f) => f.category), ['logic'])
+  assert.ok(!ctx.calls.some((c) => c.label === 'implement'))
+})
+
+test('a re-plan still open after the last spec round is carried into the build', async () => {
+  const miss = blocker({ category: 'logic', file: 'specs/7-x.md', line: 20, claim: 'the plan never maps the retired state' })
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [miss] } }))
+  await run(ctx, { config: config(), deps: deps() })
+  assert.equal(ctx.calls.filter((c) => c.label.startsWith('revise-spec')).length, 3)
+  assert.match(ctx.calls.find((c) => c.label === 'implement').prompt, /the plan never maps the retired state/)
+})
+
+test('the revised spec\'s decisions are the ones the pull request asks about', async () => {
+  let n = 0
+  const miss = blocker({ category: 'criterion-unmet', file: 'specs/7-x.md', line: 3, claim: 'wrong status' })
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({
+    'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [miss] } : clean),
+    'revise-spec': { ...spec, decisions: ['404 rather than 410 — OK?'] },
+  }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.deepEqual(r.spec.decisions, ['404 rather than 410 — OK?'])
+})
+
+test('an escalated run gets the config\'s full-tier lenses and more rounds', async () => {
+  const parity = { key: 'parity', tiers: ['full'], ask: 'Compare with the legacy EJB.' }
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => ({ ...clean, findings: [blocker({ line: 100 * ++n })] }) }))
+  const r = await run(ctx, { config: config({ lenses: { code: [parity], spec: [] } }), deps: deps({ facts: { files: 9, appLines: 400, risky: [], onlyDocs: false } }) })
+  assert.ok(ctx.calls.some((c) => c.label === 'audit:parity#1'))
+  assert.match(r.reason, /still not clean after 3 rounds/)
+})
+
+test('a hand-back learns from what the audits confirmed, and says what was not verified', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({
+    'audit:': { ...clean, findings: [blocker()] },
+    learn: { lessons: [{ pattern: 'retired states', proposal: 'docs/harness-lessons.md' }] },
+  }))
+  const d = deps({ redCheck: { checked: false, reason: 'commands.testsOnly is not set' } })
+  const r = await run(ctx, { config: config({ learn: { enabled: true } }), deps: d })
+  assert.equal(r.outcome, 'handback')
+  assert.equal(r.lessons.length, 1)
+  assert.deepEqual(r.notVerified, ['no red-check ran — commands.testsOnly is not set'])
+})

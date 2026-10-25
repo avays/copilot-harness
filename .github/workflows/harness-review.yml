@@ -3,6 +3,10 @@
 ## and a confidence. Advisory: it never fails the check, so it never blocks a
 ## merge — machines gate, agents advise.
 ##
+## It reviews every ready pull request from this repository, people's as well
+## as the harness's, and each review spends AI credits. Narrow `on:` (a label,
+## a branch prefix) if that is not what the team wants.
+##
 ## Security: the Copilot extension that runs is the one on the checked-out
 ## branch. That is why pull requests from forks are skipped — their code would
 ## run with this repository's Copilot token.
@@ -17,10 +21,6 @@ on:
         description: Pull request number
         required: true
 
-concurrency:
-  group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   issues: write
@@ -32,6 +32,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (!github.event.pull_request.draft &&
        github.event.pull_request.head.repo.full_name == github.repository)
+    concurrency:
+      group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -39,9 +42,10 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr) }}
+          persist-credentials: false
 
-      # ADAPT: the project's toolchain, if reviewers should be able to build
-      # or run a single test to prove a claim. Remove if they only read.
+      # ADAPT: the project's toolchain and JDK, if reviewers should be able to
+      # build or run a single test to prove a claim. Remove if they only read.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -54,6 +58,11 @@ jobs:
 
       - name: Install Copilot CLI
         run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
+
+      - name: Authenticate git through gh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh auth setup-git
 
       - name: Review
         env:
