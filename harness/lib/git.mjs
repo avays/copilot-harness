@@ -43,7 +43,7 @@ export async function syncBase(base, cwd) {
 
 /** The size and reach of a diff, from numstat: what escalation and review sizing read. */
 export function diffFacts(numstat, config) {
-  let appLines = 0
+  let appLines = 0, testLines = 0
   const files = [], risky = []
   for (const line of numstat.split('\n').filter(Boolean)) {
     const [add, del, ...rest] = line.split('\t')
@@ -51,8 +51,9 @@ export function diffFacts(numstat, config) {
     files.push(file)
     if (under(file, config.paths.risky)) risky.push(file)
     if (under(file, config.paths.source)) appLines += (Number(add) || 0) + (Number(del) || 0)
+    else if (under(file, config.paths.tests)) testLines += (Number(add) || 0) + (Number(del) || 0)
   }
-  return { files: files.length, appLines, risky, onlyDocs: files.length > 0 && files.every((f) => /\.(md|txt|adoc)$/i.test(f)) }
+  return { files: files.length, appLines, testLines, risky, onlyDocs: files.length > 0 && files.every((f) => /\.(md|txt|adoc)$/i.test(f)) }
 }
 
 export async function facts(base, cwd, config) {

@@ -67,9 +67,12 @@ export function escalate(profile, diff, config) {
 export function reviewSize(diff, config, { labelledFull = false } = {}) {
   const r = config.review
   if (r.depth === 'thorough' || labelledFull) return 'large'
-  let size = diff.onlyDocs || diff.appLines <= r.tinyLines ? 'tiny' : diff.appLines <= r.smallLines ? 'small' : 'large'
-  // A risky path is never tiny, and large past half the small budget.
-  if (diff.risky.length) size = diff.appLines > r.smallLines / 2 ? 'large' : size === 'tiny' ? 'small' : size
+  // Test lines count too: a PR that rewrites tests and no source is the one
+  // most likely to weaken them.
+  const lines = diff.appLines + (diff.testLines || 0)
+  let size = diff.onlyDocs || lines <= r.tinyLines ? 'tiny' : lines <= r.smallLines ? 'small' : 'large'
   if (r.depth === 'fast') size = size === 'large' ? 'small' : 'tiny'
+  // After the dial: a risky path is never tiny, and large past half the small budget.
+  if (diff.risky.length) size = lines > r.smallLines / 2 ? 'large' : size === 'tiny' ? 'small' : size
   return size
 }

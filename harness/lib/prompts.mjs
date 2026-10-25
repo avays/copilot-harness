@@ -112,7 +112,8 @@ export function specAuditAsk({ lensAsk, specPath }) {
     `building it: open source only for a line the spec cites, and do not run the build — the gate proves ` +
     `whether it works. Blockers only for something that would make the change wrong or unprovable; everything ` +
     `else is minor. Use category scope only when the TICKET itself is contradictory, unclear about what to ` +
-    `build, or impossible as written — that goes to a person; a flaw in the plan is spec-gap or logic. Cite ` +
+    `build, or impossible as written — that goes to a person; a flaw in the plan is spec-gap or logic, and ` +
+    `work in the spec the ticket did not ask for is criterion-unmet, not scope. Cite ` +
     `file and line. Empty is a good answer.`
 }
 
@@ -122,14 +123,19 @@ export function specAuditAsk({ lensAsk, specPath }) {
 export function skepticAsk({ f, where, base, specPath, list }) {
   // A finding about the spec is about what the spec says, so "the spec shows
   // it was deliberate" would refute every one of them.
+  // "Already on the base" refutes a defect the change did not introduce; it
+  // can never refute a missing criterion, whose absence is on the base by
+  // definition, and means nothing for a finding about the spec.
+  const already = where === 'the spec' ? '' : `if the defect already exists on ${base} and the ticket did not ask to ` +
+    `change it (a missing Done-when criterion is never "already on the base"), `
   const deliberate = where === 'the spec'
     ? `or if the project's instructions show it was deliberate.`
     : `or if the instructions or the spec (${specPath}) *as first committed* show it was deliberate. A later ` +
       `edit to the spec does not make a missed criterion deliberate.`
   return `An auditor claims this ${f.severity === 'minor' ? 'minor problem' : 'blocker'} in ${where}. Try to ` +
-    `REFUTE it. Open the cited file and line yourself. Refute if the line does not say what is claimed, if the ` +
-    `behaviour is already on ${base}, if it is style rather than a defect, if its fix would contradict the ` +
-    `project's instructions, ${deliberate} If you cannot tell, it is NOT refuted.` +
+    `REFUTE it. Open the cited file and line yourself. Refute if the line does not say what is claimed, ` +
+    `${already}if it is style rather than a defect, if its fix would contradict the project's instructions, ` +
+    `${deliberate} If you cannot tell, it is NOT refuted.` +
     (f.also && f.also.length ? ` Several auditors read this place differently ("also" below): refute only if EVERY reading is wrong.` : '') +
     `\n\n${list([f])}`
 }

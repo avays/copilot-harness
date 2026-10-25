@@ -80,3 +80,9 @@ test('a review runs an extra lens that names its tier', async () => {
   const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => (l.startsWith('lens:') ? lensReport() : undefined))
   assert.ok((await run(ctx, { config: config({ lenses: { code: [parity], spec: [] } }) })).lenses.includes('parity'))
 })
+
+test('a review carries at most five minors', async () => {
+  const minors = [1, 2, 3, 4, 5, 6, 7].map((i) => blocker({ severity: 'minor', line: i * 100, claim: `n${i}` }))
+  const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => (l.startsWith('lens:criteria') ? lensReport({ findings: minors.slice(0, 5) }) : l.startsWith('lens:rules') ? lensReport({ findings: minors.slice(5) }) : l.startsWith('lens:') ? lensReport() : undefined))
+  assert.equal((await run(ctx, { config: config() })).minors.length, 5)
+})

@@ -189,7 +189,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     // A person is needed only when the ticket itself is in question.
     if (round === T.specRounds && replan.some((f) => f.category === 'scope')) {
       return handBack('Spec Audit', `the ticket itself is in question after ${round} spec rounds`,
-        replan.filter((f) => f.category === 'scope'), replan.filter((f) => f.category !== 'scope'))
+        replan.filter((f) => f.category === 'scope'), [...replan.filter((f) => f.category !== 'scope'), ...carried])
     }
     const revised = await ctx.agent(
       `${COMMON}\n\n${ticket}\n\nIndependent auditors confirmed these problems with ${spec.path}:\n\n${listFindings(replan)}\n\n` +

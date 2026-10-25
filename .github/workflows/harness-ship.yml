@@ -27,9 +27,10 @@ on:
         description: Issue number
         required: true
       size:
-        description: "Force a size: full or small (blank: sized from the ticket)"
-        required: false
-        default: ""
+        description: "Force a size (blank: sized from the ticket)"
+        type: choice
+        options: [auto, full, small]
+        default: auto
 
 permissions: {}
 
@@ -71,7 +72,11 @@ jobs:
           SIZE: ${{ inputs.size }}
         run: |
           gh auth setup-git
-          node harness/bin/run.mjs ship "$ISSUE" --phase prepare ${SIZE:+--$SIZE}
+          case "${SIZE:-auto}" in
+            auto) node harness/bin/run.mjs ship "$ISSUE" --phase prepare ;;
+            full|small) node harness/bin/run.mjs ship "$ISSUE" --phase prepare "--$SIZE" ;;
+            *) echo "::error::size must be auto, full or small"; exit 1 ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: handoff-claim
@@ -127,51 +132,61 @@ jobs:
           name: handoff-claim
           path: .harness/handoff/
 
-      # Agents' code runs next. Without sudo or Docker (the docker group is
-      # root by another name) it cannot read the runner's memory or other
-      # users' files; the step fails closed if either survives.
-      # ADAPT: anything the gate needs installed must be installed above. If
-      # the gate needs Docker (Testcontainers), drop the Docker lines and read
-      # harness/ADAPTING.md §9 first: the boundary inside this job is then gone.
-      - name: Turn off sudo and Docker for the rest of the job
-        id: lock
+      # Agents' code runs next, as a user of its own. As `runner` it could
+      # plant files the job's later steps run (a .git/config hook, the
+      # downloaded actions) and read their tokens. As `harness-agent` it owns
+      # nothing they read, cannot read their environment, and cannot sudo;
+      # `runner` keeps only the right to run commands as that user. The step
+      # fails closed if any of that does not hold.
+      # ADAPT: install whatever the gate needs above this step. Docker stays
+      # off: the docker group is root by another name (harness/ADAPTING.md §9).
+      # ADAPT: a private Maven repository's variables go in the Build step's
+      # env and in its --preserve-env list.
+      - name: Isolate the agents
         run: |
+          set -euo pipefail
+          A=harness-agent
+          sudo useradd --create-home --shell /bin/bash "$A"
+          # The trusted checkout, root-owned and read-only to the agents; only
+          # its .harness/ — the workspace and the run's outputs — is theirs.
+          sudo mkdir -p /srv/harness
+          sudo cp -a "$GITHUB_WORKSPACE" /srv/harness/root
+          sudo chown -R root:root /srv/harness/root
+          sudo chmod -R a+rX,go-w /srv/harness/root
+          sudo chown -R "$A:$A" /srv/harness/root/.harness
+          if [ -f "$HOME/.m2/settings.xml" ]; then sudo install -D -o "$A" -g "$A" -m 600 "$HOME/.m2/settings.xml" "/home/$A/.m2/settings.xml"; fi
+          sudo -u "$A" git config --global user.name "harness[bot]"
+          sudo -u "$A" git config --global user.email "harness@users.noreply.github.com"
+          sudo -u "$A" git config --global --add safe.directory '*'
           sudo systemctl stop docker.socket docker containerd >/dev/null 2>&1 || true
           sudo chmod 000 /var/run/docker.sock 2>/dev/null || true
-          sudo sh -c 'rm -f /etc/sudoers.d/*'
           for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
+          # From here on: runner may act as harness-agent, and as nobody else.
+          sudo sh -c "rm -f /etc/sudoers.d/*; echo '$USER ALL=($A) NOPASSWD:SETENV: ALL' > /etc/sudoers.d/harness-agent; chmod 440 /etc/sudoers.d/harness-agent"
           sudo -k
-          # -n: no cached ticket; -S with no input: no password either.
-          if sudo -n true 2>/dev/null || sudo -S -k true </dev/null 2>/dev/null; then echo "::error::sudo is still available; the build job must not have it"; exit 1; fi
-          if docker info >/dev/null 2>&1; then echo "::error::Docker is still reachable; the build job must not have it"; exit 1; fi
-          # Before any agent runs, so they cannot change it: the reap below
-          # stops every process of this user started after this moment.
-          echo "since=$(node harness/bin/reap.mjs --mark)" >> "$GITHUB_OUTPUT"
+          if sudo -n true 2>/dev/null || sudo -S -k true </dev/null 2>/dev/null; then echo "::error::sudo to root is still available"; exit 1; fi
+          sudo -n -u "$A" true || { echo "::error::cannot run commands as $A"; exit 1; }
+          if sudo -n -u "$A" sudo -n true 2>/dev/null; then echo "::error::$A can sudo"; exit 1; fi
+          if sudo -n -u "$A" docker info >/dev/null 2>&1; then echo "::error::$A can reach Docker"; exit 1; fi
+          if sudo -n -u "$A" test -w "$GITHUB_WORKSPACE/.git/config"; then echo "::error::$A can write the runner's checkout"; exit 1; fi
 
-      # Global: the agents commit in the workspace, a repository of its own.
-      # The step ends by stopping anything the agents left running, before
-      # the upload steps start with the runner's job tokens in their env.
+      # As harness-agent, from the read-only copy of the trusted checkout. Then
+      # every process of that user is killed at once (kill -1), before the
+      # upload steps run; and again in the next step, whatever happened.
       - name: Build
+        working-directory: /srv/harness/root
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
-          git config --global user.name "harness[bot]"
-          git config --global user.email "harness@users.noreply.github.com"
           status=0
-          node harness/bin/run.mjs ship "$ISSUE" --phase build || status=$?
-          # Whatever the agents wrote to this step's command files would set
-          # env or PATH for the steps after it: empty them before and after
-          # the reap, and let nothing here stop the step early.
-          : > "$GITHUB_ENV" || true; : > "$GITHUB_PATH" || true
-          node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}" || true
-          : > "$GITHUB_ENV" || true; : > "$GITHUB_PATH" || true
+          sudo -n -u harness-agent --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME -- \
+            env "PATH=$PATH" node harness/bin/run.mjs ship "$ISSUE" --phase build || status=$?
+          sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
           exit $status
 
-      # Again, whatever happened: a cancelled or timed-out step never reached
-      # its own last lines, and the uploads below still run.
-      - name: Stop anything left running
-        if: always() && steps.lock.outputs.since != ''
-        run: node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}"
+      - name: Stop everything the agents started
+        if: always()
+        run: sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
 
       # Only this run's own files: the claim's are already in its artifact.
       - uses: actions/upload-artifact@v4
@@ -179,8 +194,8 @@ jobs:
         with:
           name: handoff-build
           path: |
-            .harness/handoff/ship-*.build.json
-            .harness/handoff/ship-*.bundle
+            /srv/harness/root/.harness/handoff/ship-*.build.json
+            /srv/harness/root/.harness/handoff/ship-*.bundle
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore
@@ -188,7 +203,7 @@ jobs:
         if: always()
         with:
           name: harness-ship-runs
-          path: .harness/runs/
+          path: /srv/harness/root/.harness/runs/
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore

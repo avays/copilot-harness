@@ -98,7 +98,7 @@ test('tampered test lines are found in the diff of the test folders only', () =>
 
 test('diff facts count source lines and name risky files', () => {
   const f = diffFacts(['10\t2\tsrc/main/java/a/Order.java', '5\t0\tsrc/test/java/a/OrderTest.java', '1\t1\tpom.xml'].join('\n'), config({ paths: { risky: ['pom.xml'] } }))
-  assert.deepEqual(f, { files: 3, appLines: 12, risky: ['pom.xml'], onlyDocs: false })
+  assert.deepEqual(f, { files: 3, appLines: 12, testLines: 5, risky: ['pom.xml'], onlyDocs: false })
 })
 
 test('copilot options come before the workflow subcommand', () => {
@@ -219,17 +219,6 @@ test('the staged harness is the root\'s, as a user extension, with the person\'s
   assert.ok(!existsSync(home))
 })
 
-test('reap kills what the step started, never its ancestors or what was running before it', async () => {
-  const { victims } = await import('../bin/reap.mjs')
-  // 1 init ← 10 runner (old) ← 20 step shell ← 30 reap; 40 daemon from before the step;
-  // 50 left behind by an agent (setsid, so its parent is 1); 60 another user's.
-  const parent = { 10: 1, 20: 10, 30: 20, 40: 1, 50: 1, 60: 1 }
-  const start = { 10: 100, 20: 500, 30: 900, 40: 50, 50: 700, 60: 800 }
-  const user = { 10: 1001, 20: 1001, 30: 1001, 40: 1001, 50: 1001, 60: 0 }
-  const kill = victims({ self: 30, me: 1001, pids: [10, 20, 30, 40, 50, 60], parentOf: (p) => parent[p] || 0, startOf: (p) => start[p], userOf: (p) => user[p] })
-  assert.deepEqual(kill, [50])
-})
-
 test('the config refuses a heavy area that is no area, and an ask that is neither text nor a function', () => {
   assert.throws(() => config({ sizing: { areas: { web: 'w' }, heavyAreas: ['persistence'] } }), /heavyAreas names "persistence"/)
   assert.throws(() => config({ lenses: { code: [{ key: 'parity', ask: 42 }], spec: [] } }), /needs a key and an ask/)
@@ -276,16 +265,6 @@ test('a Copilot run past its timeout is stopped, with everything it started', as
   assert.notEqual(spawnSync('kill', ['-0', child]).status, 0, 'the child it started is gone too')
 })
 
-test('the reap stops a process that left its group, and nothing older than its mark', async () => {
-  const { spawnSync } = await import('node:child_process')
-  const { resolve } = await import('node:path')
-  const reap = resolve(import.meta.dirname, '../bin/reap.mjs')
-  // A step shell: mark, start an escaping sleeper, reap since the mark.
-  const r = spawnSync('bash', ['-c', `since=$(node "${reap}" --mark); setsid sleep 300 & S=$!; disown; sleep 0.3; node "${reap}" --since "$since" >/dev/null; sleep 0.2; kill -0 $S 2>/dev/null && echo alive || echo gone; echo shell-ok`], { encoding: 'utf8' })
-  assert.match(r.stdout, /gone/)
-  assert.match(r.stdout, /shell-ok/)
-})
-
 test('the config refuses lens keys that collide, unknown lens tiers and unknown model slots', () => {
   const lens = (over) => config({ lenses: { code: [{ key: 'parity', ask: 'x', tiers: ['full'], ...over }], spec: [] } })
   assert.throws(() => lens({ key: 'tests' }), /lens key "tests" is taken/)
@@ -307,20 +286,33 @@ test('two findings eight lines apart in one ten-line window share a stuck key', 
   assert.notEqual(key(blocker({ line: 41 })), key(blocker({ line: 51 })))
 })
 
-test('the reap stops a process that keeps forking, children and all', async () => {
-  const { spawnSync } = await import('node:child_process')
-  const { resolve } = await import('node:path')
-  const reap = resolve(import.meta.dirname, '../bin/reap.mjs')
-  // A setsid'd loop that forks a new sleeper every few milliseconds.
-  const script = `since=$(node "${reap}" --mark)
-setsid bash -c 'while true; do sleep 30 & sleep 0.005; done' & L=$!; disown
-sleep 0.4
-node "${reap}" --since "$since" >/dev/null
-sleep 0.3
-left=$(pgrep -u "$(id -u)" -f "^sleep 30$" | wc -l)
-kill -0 $L 2>/dev/null && echo "loop alive" || echo "loop gone"
-echo "sleepers left: $left"`
-  const r = spawnSync('bash', ['-c', script], { encoding: 'utf8' })
-  assert.match(r.stdout, /loop gone/)
-  assert.match(r.stdout, /sleepers left: 0/)
+
+test('agent-written text in a pull request cannot close an issue or mention anyone', async () => {
+  const { tame } = await import('../lib/publish.mjs')
+  const t = tame('This fixes #12, closes owner/repo#3 and Resolves: #9 — thanks @alice and @org/team')
+  assert.doesNotMatch(t, /\b(fixes|closes|resolves):?\s+(#|owner)/i)
+  assert.doesNotMatch(t, /@alice|@org/)
+  assert.match(t, /#12/)
+  const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [],
+    spec: { path: 's.md', summary: 'fixes #99 for @bob', decisions: ['closes #98?'] }, built: { tryIt: 'resolves #97' }, notVerified: [] })
+  assert.match(body, /^Closes #7\./)
+  assert.doesNotMatch(body, /(fixes|closes|resolves) #9[789]/i)
+  assert.doesNotMatch(body, /@bob/)
+})
+
+test('the config refuses a round cap below two and paths that are not lists', () => {
+  assert.throws(() => config({ tiers: { small: { buildRounds: 1 } } }), /buildRounds must be a whole number of at least 2/)
+  assert.throws(() => config({ paths: { source: 'src/main/' } }), /paths.source must be a list/)
+})
+
+test('review size counts test lines, and a risky diff is never tiny even on the fast dial', () => {
+  assert.equal(reviewSize({ appLines: 0, testLines: 1000, risky: [], onlyDocs: false }, config()), 'large')
+  assert.equal(reviewSize({ appLines: 10, testLines: 0, risky: ['pom.xml'], onlyDocs: false }, config({ review: { depth: 'fast' } })), 'small')
+})
+
+test('no skeptic is told a missing criterion is refuted by being absent on the base', async () => {
+  const { skepticAsk } = await import('../lib/prompts.mjs')
+  const code = skepticAsk({ f: blocker(), where: 'the change', base: 'origin/main', specPath: 's.md', list: () => '' })
+  assert.match(code, /a missing Done-when criterion is never "already on the base"/)
+  assert.doesNotMatch(skepticAsk({ f: blocker(), where: 'the spec', base: 'origin/main', specPath: 's.md', list: () => '' }), /already/)
 })

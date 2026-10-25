@@ -309,6 +309,7 @@ test('a red gate after the lessons commit hands back at Learn', async () => {
   const r = await run(ctx, { config: config({ learn: { enabled: true } }), deps: deps({ gates: [green(), green(), red()] }) })
   assert.equal(r.outcome, 'handback')
   assert.equal(r.phase, 'Learn')
+  uniqueLabels(ctx)
 })
 
 test('learn is told whether the findings were fixed, and sees each once', async () => {
@@ -523,4 +524,32 @@ test('a pull request says the tests fail without the change only when they do', 
   const r = await run(fakeCtx(SHIP_ARGS, script({ 'skeptic:': { refuted: true, why: 'a refactor' } })), { config: config(), deps: d })
   assert.equal(r.outcome, 'pr')
   assert.doesNotMatch(shipPrBody(r), /fail without the change/)
+})
+
+test('a rules finding in the spec is re-planned, and a revision cannot move the spec', async () => {
+  const rule = blocker({ category: 'rules', file: 'specs/7-x.md', line: 5, claim: 'the plan puts logic in the controller' })
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({
+    'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [rule] } : clean),
+    'revise-spec': { path: 'somewhere/else.md', summary: 's', decisions: [] },
+  }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.ok(ctx.calls.some((c) => c.label === 'revise-spec#1'))
+  assert.equal(r.spec.path, 'specs/7-x.md')
+})
+
+test('the pull request carries at most three minors, the review at most five', async () => {
+  const minors = [1, 2, 3, 4, 5, 6].map((i) => blocker({ severity: 'minor', line: i * 100, claim: `note ${i}` }))
+  const r = await run(fakeCtx(SHIP_ARGS, script({ 'audit:': { ...clean, findings: minors } })), { config: config(), deps: deps() })
+  assert.equal(r.minors.length, 3)
+})
+
+test('a spec hand-back lists the gaps already carried', async () => {
+  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no empty case' })
+  const scope = blocker({ category: 'scope', file: 'specs/7-x.md', line: 1, claim: '404 or 410?' })
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [gap, scope] } : { ...clean, findings: [scope] }) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.ok(r.alsoOpen.some((f) => f.claim === 'no empty case'))
 })

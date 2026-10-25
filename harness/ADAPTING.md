@@ -300,7 +300,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 110 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 115 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -308,8 +308,8 @@ behaviour you change.
 - **Copilot CLI loads the staged harness and runs a workflow headless**, with the command line,
   environment and staging `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it
   used (0 on CLI 1.0.103).
-- Staging (no folder trust carried over), the agents' environment, the timeout that stops Copilot and
-  everything it started, and the reap of a process that left its group or keeps forking, by the same tests, live.
+- Staging (no folder trust carried over), the agents' environment, and the timeout that stops Copilot
+  and everything it started, by the same tests, live.
 
 **Checked by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
 definitions (`doctor --live` fails if registration does), and the workflow files pass
@@ -333,9 +333,12 @@ definitions (`doctor --live` fails if registration does), and the workflow files
 - **Repository hooks in the workspace** (`.github/hooks/*.json`). Copilot gates them on folder trust as it
   does extensions, and the staged home trusts no folder, but whether one fires in a headless agent
   session hasn't been observed: `ping` starts no agent. The first real run will show it.
-- **Turning sudo off on the runner image.** The build job's step removes the sudoers entries and fails
-  the job if `sudo -n true` still works. If a runner image keeps sudo some other way, that step fails
-  closed: adapt it rather than delete it.
+- **The *Isolate the agents* step on a hosted runner.** It creates the agents' user, copies the
+  checkout, rewrites sudoers and checks the result, and runs the build through `sudo -u harness-agent`
+  with `PATH`, `JAVA_HOME` and the Copilot token passed through. None of this can run on a laptop, so
+  the first *Harness · ship* run is its test. The step fails closed, so a runner image that differs
+  (sudoers layout, tool-cache permissions) stops the job rather than running the agents unisolated.
+  Adapt it rather than delete it.
 - **`copilot.extensionEnv` headless.** In a probe on CLI 1.0.103, ordinary variables such as
   `MAVEN_TOKEN` reached the extension without being asked for, and listing one still loaded headless. The
   SDK documents `GITHUB_TOKEN` as stripped, and says a refused request stops the extension loading, so
@@ -355,32 +358,32 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   So agents' edits to `harness/` or `harness.config.mjs` on a branch can't change the loop, the limits
   or the gate of a later run. The staged home also keeps the run's own sessions, logs and settings, so a run
   leaves nothing in your `~/.copilot` (it used to switch experimental mode on there).
-- **In Actions, the build job** uses its read-only token only for the checkout and setup actions. From the
-  agents' step on, no step has a GitHub token in its environment, and the checkouts keep no credentials.
-  Every job's trusted checkout is pinned to the default branch, so a run started by hand from another
-  branch still runs the default branch's harness. Before the agents start, sudo and Docker are switched
-  off, and the step fails if either still works (Docker counts because the `docker` group is root by
-  another name). The agents' environment carries no path to the step's command files. Copilot's whole
-  process group is killed when it exits, or when `copilot.timeoutMinutes` (or `review.timeoutMinutes`)
-  passes, both below their job's timeout. Then the reap stops every process of the runner user started
-  since the agents' step began, scanning until a pass finds nothing new, in that step and again in an
-  `always()` step that runs even after a cancellation. The step's command files are emptied before and
-  after the reap. The job saves no cache. Claiming and publishing are separate jobs that never run
-  branch code. The work crosses to publish as a git bundle. Publish takes the issue, branch and title
-  from the claim (never from the build), checks where it is pushing, and never pushes a workflow file.
-- **That cleanup is best effort, not a boundary.** The agents' code runs as the same user as the steps
-  after it. A process written to fight the reap can race it — by killing it, or by forking faster than it
-  scans — and so reach the upload steps' runtime token (artifact and cache upload, which can poison a
-  cache other workflows restore) or the step's command files. Everything else in this list holds
-  regardless.
+- **In Actions, the agents run as a user of their own.** The build job creates an unprivileged
+  `harness-agent` user, copies the trusted checkout to `/srv/harness/root` (owned by root and read-only
+  to that user, except its `.harness/`, which holds the workspace and the run's outputs), and runs
+  `run.mjs`, and so Copilot and every agent, as `harness-agent`. Then it replaces sudo with one rule:
+  the job's own user may run commands as `harness-agent`, and nothing as root. The step fails closed if
+  root sudo, the agents' sudo, their Docker access or their write access to the job's checkout survives.
+  So the agents' code can't write anything a later step runs (the checkout's `.git/config`, the
+  downloaded actions, the step's command files), can't read those steps' environment or the runner's
+  memory, and can't become root. When the build ends, every process of that user is killed at once
+  (`kill -9 -1` as that user), and again in an `always()` step.
+- **No GitHub credential in the agents' reach.** The build job's read-only token is used only by the
+  checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Every
+  job's trusted checkout is pinned to the default branch, so a run started by hand from another branch
+  still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
+  jobs that never run branch code. The work crosses to publish as a git bundle. Publish takes the issue,
+  branch and title from the claim (never from the build), checks where it is pushing, never pushes a
+  workflow file, and makes agent-written text in the PR body inert (no closing keywords, no
+  @mentions).
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
-  spend Copilot credits; read anything the build job is given (a read-only package token, if you add
-  one); write commits a person will review; **write the build job's report**, that is the PR body's
-  *Checks* and audit table, since the hand-off is written in a job where the agents' code ran; and, if it
-  wins the race above, upload to the job's cache. The project's own CI on the pull request is the
-  independent check, so make it a required status check. If the tickets come from people you don't
-  trust (a public repository), or the gate needs Docker, run the build job in a container or VM of its
-  own.
+  spend Copilot credits (up to `copilot.timeoutMinutes`, and any `copilot.limits`); read anything the
+  build job gives it (a read-only package token, if you add one); write commits a person will review;
+  and **write the build job's report**, that is the PR body's *Checks* and audit table, since the
+  hand-off is written by the agents' user. The project's own CI on the pull request is the independent
+  check, so make it a required status check. If the gate needs Docker (Testcontainers), the agents'
+  user needs Docker access, and that is root: the boundary inside the job is then gone. Run that build
+  in a container or VM of its own, or accept it for tickets from people you trust.
 - **Who can start a run.** Anyone who can label an issue (triage access) can ship it, and its body is the
   agents' brief, so prompt injection arrives that way. Keep `ready-for-ai` to people who would review the
   result.

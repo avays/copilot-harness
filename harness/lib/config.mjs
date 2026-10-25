@@ -124,6 +124,13 @@ export function resolveConfig(user = {}) {
   // A mistyped lens key would mean no auditor at all, and a run that reads
   // as audited clean.
   const known = { code: new Set([...BUILT_IN_LENSES.code, ...c.lenses.code.map((l) => l.key)]), spec: new Set([...BUILT_IN_LENSES.spec, ...c.lenses.spec.map((l) => l.key)]) }
+  // A cap is checked before the fixer runs, so one round would hand back
+  // every confirmed blocker without trying to fix it.
+  for (const [name, t] of Object.entries(c.tiers)) {
+    if (!Number.isInteger(t.buildRounds) || t.buildRounds < 2) problems.push(`tiers.${name}.buildRounds must be a whole number of at least 2`)
+    if (!Number.isInteger(t.specRounds) || t.specRounds < 0) problems.push(`tiers.${name}.specRounds must be a whole number, 0 or more`)
+  }
+  for (const k of ['source', 'tests', 'risky']) if (!Array.isArray(c.paths[k])) problems.push(`paths.${k} must be a list of path prefixes`)
   for (const [name, t] of Object.entries(c.tiers)) {
     for (const k of t.codeLenses || []) if (!known.code.has(k)) problems.push(`tiers.${name}.codeLenses names "${k}", which is no lens`)
     for (const k of t.specLenses || []) if (!known.spec.has(k)) problems.push(`tiers.${name}.specLenses names "${k}", which is no lens`)

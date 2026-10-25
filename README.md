@@ -56,8 +56,9 @@ These are why each piece exists. Keep them when you change the harness.
   The harness never restates them.
 - **AI never holds the GitHub token.** In Actions, ship and review are three jobs each. Claiming and
   publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
-  with no repository access, and runs with sudo off. Every job runs the default branch's harness,
-  and the branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
+  with no repository access, and the agents run there as a user of their own that can't sudo and
+  owns nothing the job's other steps use. Every job runs the default branch's harness, and the
+  branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
   pushed. On a laptop there is no such isolation (harness/ADAPTING.md §9).
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.
@@ -76,7 +77,6 @@ These are why each piece exists. Keep them when you change the harness.
 | `harness/lib/github.mjs`, `publish.mjs` | GitHub reads and writes; PR and comment bodies |
 | `harness/bin/run.mjs` | The entry point: prepare → `copilot workflow run` → publish, in one go or one `--phase` at a time |
 | `harness/bin/doctor.mjs` | Readiness checks; `--live` runs the ping workflow |
-| `harness/bin/reap.mjs` | Ends the agents' step by stopping anything they left running |
 | `harness/templates/spec.md` | The spec shape |
 | `harness/test/` | Tests, run with a fake Copilot context and real git (no model, no network) |
 | `.github/extensions/harness/extension.mjs` | Registers the workflows with Copilot CLI |

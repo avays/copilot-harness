@@ -96,6 +96,8 @@ function parseArgv(argv) {
     else if (rest[i] === '--notes') opt.notes = rest[++i] || ''
     else if (rest[i] === '--no-publish') opt.publish = false
     else if (rest[i] === '--phase') opt.phase = rest[++i]
+    // An unknown flag is a mistake, not something to ignore.
+    else { opt.bad = rest[i]; break }
   }
   return opt
 }
@@ -207,7 +209,7 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
     let out = '', timedOut = false
     const killGroup = () => { if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} } else { try { p.kill('SIGKILL') } catch {} } }
     // Below the job's own timeout, so the step still ends by itself and the
-    // reap after it runs: a job that times out runs nothing else in the step.
+    // cleanup after it runs: a job that times out runs nothing else in the step.
     const timer = setTimeout(() => { timedOut = true; killGroup() }, timeoutMinutes * 60_000)
     p.stdout.on('data', (d) => { out += d; process.stderr.write(d) })
     p.on('error', (e) => { clearTimeout(timer); stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
@@ -519,7 +521,8 @@ async function review(opt, root, config) {
 
 async function main() {
   const opt = parseArgv(process.argv.slice(2))
-  if (!['ship', 'review'].includes(opt.cmd) || !Number.isInteger(opt.n) || opt.n <= 0 || (opt.phase && !['prepare', 'build', 'publish'].includes(opt.phase))) {
+  if (opt.bad) console.error(`unknown option: ${opt.bad}`)
+  if (opt.bad || !['ship', 'review'].includes(opt.cmd) || !Number.isInteger(opt.n) || opt.n <= 0 || (opt.phase && !['prepare', 'build', 'publish'].includes(opt.phase))) {
     console.error('usage: node harness/bin/run.mjs ship <issue> [--full|--small] [--notes "…"] [--no-publish] [--phase prepare|build|publish]\n' +
       '       node harness/bin/run.mjs review <pr> [--no-publish] [--phase prepare|build|publish]')
     process.exit(2)
