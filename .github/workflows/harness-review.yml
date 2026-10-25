@@ -239,7 +239,7 @@ jobs:
           out="$RUNNER_TEMP/harness-out"
           rm -rf "$out"; mkdir -p "$out"
           cd /srv/harness/root/.harness 2>/dev/null || exit 0
-          /usr/bin/find -P handoff runs -type f \( -name 'review-*.build.json' -o -path 'runs/*' \) -exec /usr/bin/cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
+          /usr/bin/find -P handoff runs -type f \( -path "handoff/review-$PR.build.json" -o -path 'runs/*' \) -exec /usr/bin/cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
           # The job log masks secrets; an artifact does not.
           node "$GITHUB_WORKSPACE/harness/bin/mask.mjs" "$out"
 

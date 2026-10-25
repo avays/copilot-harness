@@ -922,3 +922,9 @@ test('a lenient test step and a later red step are both named', () => {
   const first = { steps: [{ name: 'test', ok: false, code: 1, tail: 'x' }], failedTests: [{ test: 'A#b', error: 'e' }], dirty: false }
   assert.deepEqual(gateFindings(first).map((f) => f.claim), ['gate red: A#b'])
 })
+
+test('a ticket title cannot close another issue through a squash merge', async () => {
+  const { shipTitle } = await import('../lib/publish.mjs')
+  assert.equal(shipTitle({ title: 'Fix #12 regression', issue: 7 }), 'Fix‍ #12 regression (#7)')
+  assert.equal(shipTitle({ title: 'Retire the order endpoint', issue: 7 }), 'Retire the order endpoint (#7)')
+})

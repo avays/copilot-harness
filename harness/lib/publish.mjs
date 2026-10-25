@@ -46,7 +46,9 @@ const spend = (u) => (u && Number.isFinite(Number(u.aiCredits)) && u.aiCredits !
   : '')
 
 export function shipTitle(r) {
-  return `${r.title} (#${r.issue})`
+  // A squash merge makes the title a commit subject on the base, where
+  // "Fix #12 regression" would close #12: the keywords get the joiner.
+  return `${String(r.title ?? '').replace(/[\r\n]+/g, ' ').replace(CLOSING, `$1${ZWJ}`)} (#${r.issue})`
 }
 
 export function shipPrBody(r) {
@@ -59,7 +61,7 @@ export function shipPrBody(r) {
       `Edit the messages (or squash with your own) before merging, unless that is intended.`)
   }
   if (r.spec) {
-    s.push(`## Spec\n\n[\`${tame(r.spec.path)}\`](../blob/${urlPath(r.branch)}/${urlPath(r.spec.path)}) — ${tame(r.spec.summary)}`)
+    s.push(`## Spec\n\n[${code(r.spec.path)}](../blob/${urlPath(r.branch)}/${urlPath(r.spec.path)}) — ${tame(r.spec.summary)}`)
     if (r.spec.decisions && r.spec.decisions.length) s.push(`**Decisions for the reviewer:**\n${r.spec.decisions.map((d) => `- [ ] ${tame(d)}`).join('\n')}`)
   }
   if (r.built) {
