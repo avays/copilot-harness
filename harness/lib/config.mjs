@@ -70,11 +70,15 @@ export const DEFAULTS = {
     denyTools: ['shell(git push)', 'shell(gh:*)'],
     extensionEnv: [],
     limits: null,
+    // The whole Copilot run, below the workflow job's timeout-minutes (120).
+    timeoutMinutes: 100,
   },
 }
 
 // The lenses harness/lib/prompts.mjs defines; extra ones come from config.lenses.
 const BUILT_IN_LENSES = { code: ['combined', 'criteria', 'rules'], spec: ['combined', 'criteria', 'fit'] }
+// Review also has a built-in `tests` lens; an extra lens may not reuse any of these keys.
+const RESERVED = { code: new Set([...BUILT_IN_LENSES.code, 'tests']), spec: new Set(BUILT_IN_LENSES.spec) }
 
 const plain = (v) => v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof RegExp)
 
@@ -99,8 +103,19 @@ export function resolveConfig(user = {}) {
   for (const t of Object.values(c.tiers)) {
     for (const k of ['think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)
   }
-  for (const l of [...c.lenses.code, ...c.lenses.spec]) {
-    if (!l.key || !['string', 'function'].includes(typeof l.ask)) problems.push('every extra lens needs a key and an ask (a string, or a function of the base ref)')
+  for (const [kind, ls] of [['code', c.lenses.code], ['spec', c.lenses.spec]]) {
+    const seen = new Set()
+    for (const l of ls) {
+      if (!l.key || !['string', 'function'].includes(typeof l.ask)) problems.push('every extra lens needs a key and an ask (a string, or a function of the base ref)')
+      // Two lenses with one key share a label, and a dead one can't be named.
+      if (RESERVED[kind].has(l.key) || seen.has(l.key)) problems.push(`lens key "${l.key}" is taken — every ${kind} lens needs its own key`)
+      seen.add(l.key)
+      if (l.model && !(l.model in c.models)) problems.push(`lens "${l.key}" names model "${l.model}", which models does not define (a slot: ${Object.keys(c.models).join(', ')})`)
+      // A lens no tier selects never runs, and the run reads as audited without it.
+      for (const t of l.tiers || []) if (!(t in c.tiers)) problems.push(`lens "${l.key}" names tier "${t}", which tiers does not define`)
+      const named = Object.values(c.tiers).some((t) => (t[kind === 'code' ? 'codeLenses' : 'specLenses'] || []).includes(l.key))
+      if (!(l.tiers || []).length && !named) problems.push(`lens "${l.key}" has no tiers and no tier lists it, so it would never run`)
+    }
   }
   // A heavy area that is not an area can never be reported, so its rule
   // would never fire.

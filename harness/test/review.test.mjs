@@ -74,3 +74,9 @@ test('a review runs an extra lens its tier lists by key', async () => {
   const r = await run(ctx, { config: c })
   assert.ok(r.lenses.includes('parity'))
 })
+
+test('a review runs an extra lens that names its tier', async () => {
+  const parity = { key: 'parity', tiers: ['full'], ask: 'Compare with legacy.' }
+  const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => (l.startsWith('lens:') ? lensReport() : undefined))
+  assert.ok((await run(ctx, { config: config({ lenses: { code: [parity], spec: [] } }) })).lenses.includes('parity'))
+})

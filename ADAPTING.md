@@ -117,7 +117,8 @@ commands: {
 - **`quick`** is what agents run after each edit. Make it fast; the gate is the thorough one.
 - **`testsOnly`** is what red-check uses. `{tests}` becomes a comma-separated list of
   `tests.id(file)` values. For Surefire that's class names. If red-check can't be made to work, set it
-  to `null`: the harness says so in every PR's *Not verified* section.
+  to `null`: the harness says so in every PR's *Not verified* section, and doctor shows it as a ⚠
+  warning rather than a failure.
 - **Private Maven repositories:** the gate has to download dependencies, so the build job needs the
   repository's credential, and **the agents will be able to read it**. Use a **read-only package token**
   that can do nothing but download artifacts. Wire it like this in `harness-ship.yml` (and in
@@ -204,7 +205,12 @@ lenses: {
 ```
 
 A lens's `ask` is all its auditor is told about its job, on top of the ticket, the spec and the diff.
-Write it like a brief for a reviewer who has never seen the project.
+Write it like a brief for a reviewer who has never seen the project. It may be a string, or a function
+of the base ref (`(base) => \`… git diff ${base}...HEAD …\``). A lens needs `tiers` (`small`, `full`), or a
+tier's `codeLenses` / `specLenses` must list its key. Its key can't be one of the built-in lenses'
+(`combined`, `criteria`, `rules`, `tests`, `fit`). Its optional `model` is a slot (`light`, `standard`,
+`strong`). The config refuses anything else, because a lens that never runs would read as a clean
+audit.
 
 ### `models` and `tiers`
 
@@ -270,7 +276,7 @@ would go if you want it:
 
 | Piece | Where it goes |
 | --- | --- |
-| **Browser or API QA** (drive the running app, try to break it) | A lens with a `tiers` entry whose `ask` starts the app (`./mvnw spring-boot:run` in the background on a free port), probes it with `curl` or Playwright, and stops it. Run it after the readers, because it needs ports. Then add the tools it needs to `copilot.allowTools` |
+| **Browser or API QA** (drive the running app, try to break it) | A lens with a `tiers` entry whose `ask` starts the app (`./mvnw spring-boot:run` in the background on a free port), probes it with `curl` or Playwright, and stops it. Every lens of a round runs at once, so it must pick a port no other lens or test uses. Then add the tools it needs to `copilot.allowTools` |
 | **Legacy-vs-new parity probes** | The same idea, against both deployments: call the JBoss endpoint and the Spring Boot one with the same input and compare. For a migration this is the strongest evidence there is |
 | **`@mention` on a PR to request a change** | A workflow on `issue_comment` that runs a third workflow: the fix step from `ship.mjs` with the comment as the finding, then the gate |
 | **Live progress on the issue** | `run.mjs` reads Copilot's JSONL as it streams (`session.info` with `infoType: workflow_phase`); edit one comment as phases change |
@@ -286,14 +292,16 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 91 tests
-  against a fake Copilot context, and five deliberate mutations of the loop each make one fail.
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 109 tests
+  against a fake Copilot context and real git repositories. While building it, about sixty mutations
+  of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
   environment: with it, git hands out no stored credential, and workflow-file edits are detected.
 - **Copilot CLI loads the staged harness and runs a workflow headless**, with the command line,
   environment and staging `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it
   used (0 on CLI 1.0.103).
-- Staging, the reap of left-behind processes, and the agents' environment, by the same tests.
+- Staging (no folder trust carried over), the agents' environment, the timeout that stops Copilot and
+  everything it started, and the reap of a process that left its group, by the same tests, live.
 
 **Checked by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
 definitions (`doctor --live` fails if registration does), and the workflow files pass
@@ -328,13 +336,22 @@ definitions (`doctor --live` fails if registration does), and the workflow files
 - **Where the harness comes from.** `run.mjs` copies the harness from the checkout it runs in (in Actions,
   the default branch) into a temporary Copilot home and loads it as a *user* extension. Copilot then runs
   in the workspace — the branch, or the pull request, checked out under `.harness/worktrees/` — so the
-  agents' shells start in the tree they edit. Copilot never loads the workspace's own copy: headless, it
-  loads project extensions only with an opt-in the harness removes. So agents' edits to `harness/` or
-  `harness.config.mjs` on a branch can't change the loop, the limits or the gate of a later run.
-- **In Actions, the build job** is given no GitHub token in any step, its checkouts keep no credentials,
-  and sudo is switched off (verified) before the agents start. The step ends by killing every process
-  the agents left behind, before the upload steps start with the runner's job tokens in their
-  environment. The job saves no cache. Claiming and publishing are separate jobs that never run branch
+  agents' shells start in the tree they edit. Copilot never loads the workspace's own copy. Headless, it
+  loads project extensions only for a trusted folder, or with an opt-in, and the harness removes both:
+  the opt-in variables are stripped, and the staged Copilot home gets a copy of your config with every
+  trusted folder removed. A folder you once trusted interactively therefore stays untrusted here (shown
+  live on CLI 1.0.103: with your trust linked in, the workspace's extension loaded; staged, it did not).
+  So agents' edits to `harness/` or `harness.config.mjs` on a branch can't change the loop, the limits
+  or the gate of a later run.
+- **In Actions, the build job** uses its read-only token only for the checkout and setup actions. From the
+  agents' step on, no step has a GitHub token in its environment, and the checkouts keep no credentials.
+  Before the agents start, sudo and Docker are switched off, and the step fails if either still works
+  (Docker counts because the `docker` group is root by another name). The agents' environment carries
+  no path to the step's command files, and the step empties them anyway before it ends, so agents can't
+  set env or PATH for later steps. Copilot's whole process group is killed when it exits, or when
+  `copilot.timeoutMinutes` passes, which is below the job's own timeout. Then every process of the
+  runner user started since the agents' step began is killed, in that step and again in an `always()`
+  step that runs even after a cancellation. The job saves no cache. Claiming and publishing are separate jobs that never run branch
   code. The work crosses to publish as a git bundle, publish takes the issue, branch and title from the
   claim (never from the build), checks where it is pushing, and never pushes a workflow file.
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
@@ -342,9 +359,10 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   one); write commits a person will review; and **write the build job's report**. The report is the PR
   body's *Checks* and audit table, and the hand-off file is written in a job where the agents' code ran.
   The project's own CI on the pull request is the independent check, so make it a required status check.
-  A process that daemonises out of the Copilot process group and survives the reap could, in principle,
-  read the job's runtime tokens (artifact and cache upload) from a later step. Hosted runners give no
-  stronger boundary inside a job. If the tickets come from people you don't trust (a public repository),
+  The reap kills by user and start time, so an escaped process can't hide by changing its name or
+  group. A process that can do anything about it would have needed root, which the job no longer has.
+  This is still one job on one VM, though. If the gate needs Docker (Testcontainers, say), the Docker
+  lines must go, and an agent's code can then become root and reach the runner's job tokens. If the tickets come from people you don't trust (a public repository),
   run the build job in a container or VM of its own.
 - **Who can start a run.** Anyone who can label an issue (triage access) can ship it, and its body is the
   agents' brief, so prompt injection arrives that way. Keep `ready-for-ai` to people who would review the

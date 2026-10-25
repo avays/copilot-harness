@@ -157,9 +157,10 @@ export default {
     ],
     // Agents commit; only harness/bin/run.mjs pushes and talks to GitHub.
     denyTools: ['shell(git push)', 'shell(gh:*)'],
-    // Environment variables the extension's own commands need (a private
-    // Maven repository's token, say). Copilot strips secrets from extension
-    // processes unless they are asked for by name.
+    // Variables the gate needs that Copilot strips from the extension
+    // process. In a probe on CLI 1.0.103 ordinary ones (MAVEN_TOKEN) were not
+    // stripped; a refused request stops the extension loading. Leave empty
+    // unless the gate cannot authenticate (ADAPTING §9).
     extensionEnv: [],
     // Workflow ceilings ({ maxAiCredits, timeoutSeconds, maxTotalSubagents }).
     // Set one only from a cost you have measured: a guessed ceiling stops a

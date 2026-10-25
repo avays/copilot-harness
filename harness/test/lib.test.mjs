@@ -191,12 +191,13 @@ test('the config refuses a tier that would audit nothing', () => {
   assert.throws(() => config({ tiers: { small: { codeLenses: [] } } }), /no codeLenses/)
 })
 
-test('the staged harness is the root\'s, as a user extension, with the person\'s Copilot home linked in', async () => {
+test('the staged harness is the root\'s, as a user extension, with the person\'s Copilot home linked in, minus trust', async () => {
   const { existsSync, lstatSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
   const { join, resolve } = await import('node:path')
   const { tmpdir } = await import('node:os')
   const own = mkdtempSync(join(tmpdir(), 'own-home-'))
   writeFileSync(join(own, 'config.json'), '{}')
+  writeFileSync(join(own, 'session-store.db'), '')
   mkdirSync(join(own, 'extensions', 'something-else'), { recursive: true })
   const root = resolve(import.meta.dirname, '../..')
   const { home, cleanup } = stageHarness(root, own)
@@ -206,7 +207,9 @@ test('the staged harness is the root\'s, as a user extension, with the person\'s
     // extension.mjs imports ../../../harness/ — that must be the staged copy.
     assert.ok(existsSync(resolve(join(home, 'extensions', 'harness'), '../../../harness/lib/config.mjs')))
     assert.ok(existsSync(resolve(join(home, 'extensions', 'harness'), '../../../harness.config.mjs')))
-    assert.ok(lstatSync(join(home, 'config.json')).isSymbolicLink())
+    // Everything but the trust-bearing config is linked, so a login carries over.
+    assert.ok(lstatSync(join(home, 'session-store.db')).isSymbolicLink())
+    assert.ok(!lstatSync(join(home, 'config.json')).isSymbolicLink())
     assert.ok(!existsSync(join(home, 'extensions', 'something-else')), 'the person\'s own extensions are not loaded')
     assert.equal(readFileSync(ext, 'utf8'), readFileSync(join(root, '.github/extensions/harness/extension.mjs'), 'utf8'))
   } finally { cleanup() }
@@ -227,4 +230,76 @@ test('reap kills what the step started, never its ancestors or what was running 
 test('the config refuses a heavy area that is no area, and an ask that is neither text nor a function', () => {
   assert.throws(() => config({ sizing: { areas: { web: 'w' }, heavyAreas: ['persistence'] } }), /heavyAreas names "persistence"/)
   assert.throws(() => config({ lenses: { code: [{ key: 'parity', ask: 42 }], spec: [] } }), /needs a key and an ask/)
+})
+
+test('the staged Copilot home trusts no folder, whatever the person trusted', async () => {
+  const { untrusted } = await import('../bin/run.mjs')
+  const out = JSON.parse(untrusted(JSON.stringify({ trustedFolders: ['/home/me/repo'], trusted_folders: ['/x'], model: 'm', theme: 'dark' })))
+  assert.deepEqual(out, { model: 'm', theme: 'dark' })
+  assert.equal(untrusted('not json'), '{}')
+  const { mkdtempSync, writeFileSync, readFileSync, lstatSync } = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const own = mkdtempSync(join(tmpdir(), 'own-home-'))
+  writeFileSync(join(own, 'config.json'), JSON.stringify({ trustedFolders: ['/'], model: 'm' }))
+  const { home, cleanup } = stageHarness(resolve(import.meta.dirname, '../..'), own)
+  try {
+    assert.ok(!lstatSync(join(home, 'config.json')).isSymbolicLink(), 'a copy, so the person\'s trust never reaches the run')
+    assert.deepEqual(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')), { model: 'm' })
+  } finally { cleanup() }
+})
+
+test('the agents\' environment drops folder trust and the step\'s command files', () => {
+  const env = copilotEnv({ COPILOT_ALLOW_ALL: 'true', GITHUB_ENV: '/r/env', GITHUB_PATH: '/r/path', GITHUB_OUTPUT: '/r/out', GITHUB_STEP_SUMMARY: '/r/s', GITHUB_STATE: '/r/st' })
+  for (const k of ['COPILOT_ALLOW_ALL', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY', 'GITHUB_STATE']) assert.equal(env[k], undefined, k)
+})
+
+test('a Copilot run past its timeout is stopped, with everything it started', async () => {
+  const { runCopilot } = await import('../bin/run.mjs')
+  const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { spawnSync } = await import('node:child_process')
+  const dir = mkdtempSync(join(tmpdir(), 'harness-timeout-'))
+  const bin = join(dir, 'fake-copilot')
+  const pidFile = join(dir, 'child.pid')
+  // Starts a child that would outlive it, then hangs.
+  writeFileSync(bin, `#!/bin/bash\nsleep 300 &\necho $! > ${pidFile}\nwait\n`)
+  chmodSync(bin, 0o755)
+  const c = config({ copilot: { bin, timeoutMinutes: 0.01 } })
+  const r = await runCopilot(resolve(import.meta.dirname, '../..'), c, 'harness-ping', {}, dir, dir)
+  assert.match(r.reason, /passed copilot.timeoutMinutes/)
+  const child = (await import('node:fs')).readFileSync(pidFile, 'utf8').trim()
+  assert.notEqual(spawnSync('kill', ['-0', child]).status, 0, 'the child it started is gone too')
+})
+
+test('the reap stops a process that left its group, and nothing older than its mark', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { resolve } = await import('node:path')
+  const reap = resolve(import.meta.dirname, '../bin/reap.mjs')
+  // A step shell: mark, start an escaping sleeper, reap since the mark.
+  const r = spawnSync('bash', ['-c', `since=$(node "${reap}" --mark); setsid sleep 300 & S=$!; disown; sleep 0.3; node "${reap}" --since "$since" >/dev/null; sleep 0.2; kill -0 $S 2>/dev/null && echo alive || echo gone; echo shell-ok`], { encoding: 'utf8' })
+  assert.match(r.stdout, /gone/)
+  assert.match(r.stdout, /shell-ok/)
+})
+
+test('the config refuses lens keys that collide, unknown lens tiers and unknown model slots', () => {
+  const lens = (over) => config({ lenses: { code: [{ key: 'parity', ask: 'x', tiers: ['full'], ...over }], spec: [] } })
+  assert.throws(() => lens({ key: 'tests' }), /lens key "tests" is taken/)
+  assert.throws(() => lens({ key: 'rules' }), /lens key "rules" is taken/)
+  assert.throws(() => config({ lenses: { code: [{ key: 'p', ask: 'x', tiers: ['full'] }, { key: 'p', ask: 'y', tiers: ['full'] }], spec: [] } }), /"p" is taken/)
+  assert.throws(() => lens({ tiers: ['ful'] }), /names tier "ful"/)
+  assert.throws(() => lens({ tiers: [] }), /would never run/)
+  assert.throws(() => lens({ model: 'gpt-4.1' }), /names model "gpt-4.1"/)
+  assert.doesNotThrow(() => lens({ model: 'strong' }))
+})
+
+test('sizing: many source files bring in the criteria and rules auditors', () => {
+  const p = profileFor({ ...smallFacts, files: 9 }, config())
+  assert.deepEqual(p.codeLenses, ['criteria', 'rules'])
+})
+
+test('two findings eight lines apart in one ten-line window share a stuck key', () => {
+  assert.equal(key(blocker({ line: 41 })), key(blocker({ line: 48, claim: 'reworded' })))
+  assert.notEqual(key(blocker({ line: 41 })), key(blocker({ line: 51 })))
 })

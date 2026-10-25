@@ -11,8 +11,9 @@ describes. This file is for an agent changing the harness here; it is not copied
   question to an agent.
 - **Nothing in a workflow talks to GitHub.** It runs inside Copilot with no token. GitHub reads and writes
   belong in `harness/bin/run.mjs` and `harness/lib/github.mjs`, in its prepare and publish phases.
-- **The build phase never holds a GitHub token.** In Actions it is its own job, given only
-  `COPILOT_GITHUB_TOKEN`. An agent can read the environment of any process above it, so stripping a token
+- **The build phase never holds a GitHub token.** In Actions it is its own job. Its read-only token is
+  used only by the checkout and setup actions, and from the agents' step on only `COPILOT_GITHUB_TOKEN`
+  is in the environment. Sudo and Docker are off, and leftover processes are reaped (`reap.mjs`). An agent can read the environment of any process above it, so stripping a token
   from Copilot's environment is not enough on its own. Don't give the build jobs a GitHub credential, and
   never let a job that holds one run code from the branch. The harness that runs is staged from the
   root checkout (`stageHarness` in `run.mjs`) and loaded as a user extension; the branch is only the

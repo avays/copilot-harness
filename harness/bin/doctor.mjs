@@ -14,6 +14,8 @@ import { copilotArgv, copilotEnv, readEvents, stageHarness } from './run.mjs'
 const live = process.argv.includes('--live')
 const results = []
 const check = (name, ok, detail = '') => results.push({ name, ok, detail })
+// A choice the docs allow, said plainly but not counted as a failure.
+const warn = (name, ok, detail = '') => results.push({ name, ok, detail, warning: !ok })
 const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ...opts })
 
 const top = run('git', ['rev-parse', '--show-toplevel'])
@@ -51,7 +53,7 @@ if (config) {
   // can never escalate a run, and nothing else would say so.
   const dead = config.paths.risky.filter((p) => !tracked.some((f) => f === p || f.startsWith(p)))
   check('every paths.risky entry matches a tracked file', !dead.length, dead.length ? `no file under ${dead.join(', ')} (prefixes, no globs)` : '')
-  check('red-check is configured', Boolean(config.commands.testsOnly), config.commands.testsOnly ? '' : 'commands.testsOnly is null: tests that prove nothing go unnoticed')
+  warn('red-check is configured', Boolean(config.commands.testsOnly), config.commands.testsOnly ? '' : 'commands.testsOnly is null: tests that prove nothing go unnoticed')
   check('the extension is present', existsSync(join(root, '.github/extensions/harness/extension.mjs')))
   check('the spec template is present', existsSync(join(root, 'harness/templates/spec.md')))
   // Placeholders are written `TODO:`; the word on its own in a comment is not one.
@@ -101,8 +103,8 @@ if (live && config && cop.status === 0) {
     : `exit ${r.status}: ${(r.stderr || r.stdout || '').trim().split('\n').slice(-3).join(' | ')}`)
 }
 
-for (const r of results) console.log(`${r.ok ? '✓' : '✗'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`)
-const failed = results.filter((r) => !r.ok).length
+for (const r of results) console.log(`${r.ok ? '✓' : r.warning ? '⚠' : '✗'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`)
+const failed = results.filter((r) => !r.ok && !r.warning).length
 console.log(failed ? `\n${failed} to fix. ADAPTING.md says how.` : '\nReady.')
 process.exitCode = failed ? 1 : 0
 if (!live && !failed) console.log('Next: node harness/bin/doctor.mjs --live  (runs a no-agent workflow in this working tree: Copilot loads the extension and the config; costs no credits)')

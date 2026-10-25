@@ -123,15 +123,25 @@ jobs:
           name: handoff-claim
           path: .harness/handoff/
 
-      # Agents' code runs next. Without sudo it cannot read the runner's own
-      # memory or other users' files; the step fails closed if sudo survives.
-      # ADAPT: anything the gate needs installed must be installed above.
-      - name: Turn off sudo for the rest of the job
+      # Agents' code runs next. Without sudo or Docker (the docker group is
+      # root by another name) it cannot read the runner's memory or other
+      # users' files; the step fails closed if either survives.
+      # ADAPT: anything the gate needs installed must be installed above. If
+      # the gate needs Docker (Testcontainers), drop the Docker lines and read
+      # ADAPTING.md §9 first: the boundary inside this job is then gone.
+      - name: Turn off sudo and Docker for the rest of the job
+        id: lock
         run: |
+          sudo systemctl stop docker.socket docker containerd >/dev/null 2>&1 || true
+          sudo chmod 000 /var/run/docker.sock 2>/dev/null || true
           sudo sh -c 'rm -f /etc/sudoers.d/*'
           for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
           sudo -k
           if sudo -n true 2>/dev/null; then echo "::error::sudo is still available; the build job must not have it"; exit 1; fi
+          if docker info >/dev/null 2>&1; then echo "::error::Docker is still reachable; the build job must not have it"; exit 1; fi
+          # Before any agent runs, so they cannot change it: the reap below
+          # stops every process of this user started after this moment.
+          echo "since=$(node harness/bin/reap.mjs --mark)" >> "$GITHUB_OUTPUT"
 
       # Global: the agents commit in the workspace, a repository of its own.
       # The step ends by stopping anything the agents left running, before
@@ -144,8 +154,17 @@ jobs:
           git config --global user.email "harness@users.noreply.github.com"
           status=0
           node harness/bin/run.mjs ship "$ISSUE" --phase build || status=$?
-          node harness/bin/reap.mjs
+          node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}"
+          # Whatever the agents wrote to this step's command files would set
+          # env or PATH for the steps after it.
+          : > "$GITHUB_ENV"; : > "$GITHUB_PATH"
           exit $status
+
+      # Again, whatever happened: a cancelled or timed-out step never reached
+      # its own last lines, and the uploads below still run.
+      - name: Stop anything left running
+        if: always() && steps.lock.outputs.since != ''
+        run: node harness/bin/reap.mjs --since "${{ steps.lock.outputs.since }}"
 
       # Only this run's own files: the claim's are already in its artifact.
       - uses: actions/upload-artifact@v4

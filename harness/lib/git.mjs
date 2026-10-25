@@ -24,6 +24,9 @@ export async function nameStatus(base, cwd) {
  * should be tested against what landed, not against the base it began on.
  */
 export async function syncBase(base, cwd) {
+  // git refuses to merge over uncommitted changes, and that refusal is not a
+  // conflict: leave the tree alone and let the gate report it as dirty.
+  if (await dirty(cwd)) return { sync: 'dirty', conflicts: [] }
   const remote = base.includes('/') ? base.split('/')[0] : 'origin'
   const branch = base.includes('/') ? base.split('/').slice(1).join('/') : base
   // Inside a CI run the agents' side has no credentials, so on a private

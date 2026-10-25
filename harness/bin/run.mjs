@@ -76,7 +76,10 @@ export function copilotEnv(env) {
   // Never load the workspace's own .github/extensions: the branch's copy of
   // the harness may have been edited by agents. The harness that runs is
   // the staged one (stageHarness), loaded as a user extension.
-  for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK', 'GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS']) delete out[k]
+  // COPILOT_ALLOW_ALL=true would trust the folder too. The step's command
+  // files would let an agent set env or PATH for the job's later steps.
+  for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK', 'GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS', 'COPILOT_ALLOW_ALL',
+    'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT', 'GITHUB_STATE', 'GITHUB_STEP_SUMMARY']) delete out[k]
   // ssh would still read a passphrase-less key from ~/.ssh by itself.
   out.GIT_SSH_COMMAND = 'ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityFile=/dev/null -o BatchMode=yes'
   // An empty credential.helper resets the helper list for every git call.
@@ -146,6 +149,17 @@ async function must(args, cwd, what) {
  * The person's own Copilot home is linked in, minus its extensions, so a
  * `copilot login` still signs the run in.
  */
+const TRUST_FILES = new Set(['config.json', 'settings.json'])
+
+/** A Copilot config without folder trust. Unreadable JSON becomes {}: trust nothing. */
+export function untrusted(text) {
+  let c
+  try { c = JSON.parse(text) } catch { return '{}' }
+  if (!c || typeof c !== 'object') return '{}'
+  for (const k of Object.keys(c)) if (/trust/i.test(k)) delete c[k]
+  return JSON.stringify(c, null, 2)
+}
+
 export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedir(), '.copilot')) {
   const stage = mkdtempSync(join(tmpdir(), 'harness-stage-'))
   cpSync(join(root, 'harness'), join(stage, 'harness'), { recursive: true })
@@ -155,14 +169,20 @@ export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedi
   // extension.mjs imports ../../../harness/: from home/extensions/harness/
   // that is the stage, where the copy lives.
   cpSync(join(root, '.github', 'extensions', 'harness', 'extension.mjs'), join(home, 'extensions', 'harness', 'extension.mjs'))
+  // Trusted folders are dropped: a folder the person once trusted in
+  // interactive Copilot would load the workspace's own project extension.
   if (existsSync(own)) {
-    for (const entry of readdirSync(own)) if (entry !== 'extensions') symlinkSync(join(own, entry), join(home, entry))
+    for (const entry of readdirSync(own)) {
+      if (entry === 'extensions') continue
+      if (TRUST_FILES.has(entry)) writeFileSync(join(home, entry), untrusted(readFileSync(join(own, entry), 'utf8')))
+      else symlinkSync(join(own, entry), join(home, entry))
+    }
   }
   return { home, cleanup: () => rmSync(stage, { recursive: true, force: true }) }
 }
 
 /** Run the workflow headless; the result file, or an error result. */
-function runCopilot(root, config, workflow, args, dir, cwd) {
+export function runCopilot(root, config, workflow, args, dir, cwd) {
   const argsFile = join(dir, 'args.json'), resultFile = join(dir, 'result.json')
   writeFileSync(argsFile, JSON.stringify(args, null, 2))
   const argv = copilotArgv(config, workflow, argsFile, resultFile)
@@ -179,12 +199,18 @@ function runCopilot(root, config, workflow, args, dir, cwd) {
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
     })
-    let out = ''
+    let out = '', timedOut = false
+    const killGroup = () => { if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} } else { try { p.kill('SIGKILL') } catch {} } }
+    // Below the job's own timeout, so the step still ends by itself and the
+    // reap after it runs: a job that times out runs nothing else in the step.
+    const timer = setTimeout(() => { timedOut = true; killGroup() }, config.copilot.timeoutMinutes * 60_000)
     p.stdout.on('data', (d) => { out += d; process.stderr.write(d) })
-    p.on('error', (e) => { stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
+    p.on('error', (e) => { clearTimeout(timer); stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
     p.on('close', (code) => {
-      if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} }
+      clearTimeout(timer)
+      killGroup()
       stage.cleanup()
+      if (timedOut) return done({ outcome: 'error', reason: `the run passed copilot.timeoutMinutes (${config.copilot.timeoutMinutes}) and was stopped` })
       writeFileSync(join(dir, 'stdout.jsonl'), out)
       const { status, usage } = readEvents(out)
       // Exit 0 is the only case where the result file is this run's; a

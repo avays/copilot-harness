@@ -127,3 +127,10 @@ test('a workflow file with a quoted name is still found', async () => {
   g('add', '-A'); g('commit', '-qm', 'odd names')
   assert.deepEqual((await workflowEdits('origin/main', 'HEAD', dir)).sort(), ['.github/workflows/tab\tx.yml', '.github/workflows/é.yml'])
 })
+
+test('uncommitted changes are reported as such, not as a conflict with the base', async () => {
+  const { dir, g } = repo()
+  g('checkout', '-q', 'main'); writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 451; }\n'); g('commit', '-qam', 'base moved'); g('update-ref', 'refs/remotes/origin/main', 'HEAD'); g('checkout', '-q', 'work')
+  writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 404; }\n')
+  assert.deepEqual(await syncBase('origin/main', dir), { sync: 'dirty', conflicts: [] })
+})

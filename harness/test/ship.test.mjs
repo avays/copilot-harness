@@ -458,3 +458,69 @@ test('an extra lens may be a function of the base ref', async () => {
   await run(ctx, { config: config({ lenses: { code: [parity], spec: [] } }), deps: deps() })
   assert.match(ctx.calls.find((c) => c.label === 'audit:parity#1').prompt, /against origin\/main\./)
 })
+
+test('a dead auditor after a red gate does not list the red gate as unresolved', async () => {
+  const r = await run(fakeCtx(SHIP_ARGS, script({ 'audit:': undefined })), { config: config(), deps: deps({ gates: [red(), green()] }) })
+  assert.deepEqual(r.alsoOpen, [])
+})
+
+test('spec findings reach Learn, and Learn runs once', async () => {
+  const miss = blocker({ category: 'criterion-unmet', file: 'specs/7-x.md', line: 3, claim: 'the spec returns 410' })
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [miss] } : clean), learn: { lessons: [] } }))
+  await run(ctx, { config: config({ learn: { enabled: true } }), deps: deps() })
+  const learns = ctx.calls.filter((c) => c.label === 'learn')
+  assert.equal(learns.length, 1)
+  assert.match(learns[0].prompt, /the spec returns 410/)
+})
+
+test('a scope finding before the last spec round is revised, not handed back', async () => {
+  const scope = blocker({ category: 'scope', file: 'specs/7-x.md', line: 1, claim: '404 or 410?' })
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [scope] } : clean) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.ok(ctx.calls.some((c) => c.label === 'revise-spec#1'))
+  assert.equal(r.outcome, 'pr')
+})
+
+test('a forced-full or ship:full ticket is not asked for a spec in setup', async () => {
+  const a = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
+  await run(a, { config: config(), deps: deps() })
+  assert.doesNotMatch(a.calls[0].prompt, /also write the spec/)
+  const b = fakeCtx({ ...SHIP_ARGS, labels: ['ship:full'] }, script())
+  await run(b, { config: config(), deps: deps() })
+  assert.doesNotMatch(b.calls[0].prompt, /also write the spec/)
+})
+
+test('a lens with its own model slot runs on it', async () => {
+  const parity = { key: 'parity', tiers: ['full'], ask: 'x', model: 'light' }
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
+  await run(ctx, { config: config({ lenses: { code: [parity], spec: [] } }), deps: deps() })
+  assert.equal(ctx.calls.find((c) => c.label === 'audit:parity#1').opts.model, 'm-light')
+})
+
+test('the stuck rule fires on the third confirmation, not the second', async () => {
+  const r = await run(fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:': { ...clean, findings: [blocker()] } })), { config: config(), deps: deps() })
+  assert.equal(r.rounds.length, 3)
+})
+
+test('an auditor\'s findings are capped at five', async () => {
+  const many = [1, 2, 3, 4, 5, 6, 7].map((i) => blocker({ line: i * 100, claim: `problem ${i}` }))
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': { ...clean, findings: many }, 'skeptic:': { refuted: true, why: '' } }))
+  await run(ctx, { config: config(), deps: deps() })
+  assert.equal(ctx.calls.filter((c) => c.label.startsWith('skeptic:code:') && c.label.endsWith('#1')).length, 5)
+})
+
+test('a setup with no criteria hands back', async () => {
+  const r = await run(fakeCtx(SHIP_ARGS, script({ setup: { proceed: true, reason: 'x', doneWhen: [], sizing: smallFacts } })), { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.match(r.reason, /no Done-when criteria/)
+})
+
+test('a pull request says the tests fail without the change only when they do', async () => {
+  const { shipPrBody } = await import('../lib/publish.mjs')
+  const d = deps({ redCheck: { checked: true, failedOnBase: false, tests: ['T'], reverted: ['x'] } })
+  const r = await run(fakeCtx(SHIP_ARGS, script({ 'skeptic:': { refuted: true, why: 'a refactor' } })), { config: config(), deps: d })
+  assert.equal(r.outcome, 'pr')
+  assert.doesNotMatch(shipPrBody(r), /fail without the change/)
+})
