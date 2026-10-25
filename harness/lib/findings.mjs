@@ -146,12 +146,26 @@ export const where = (f) => `${f.file}|${f.line ? f.line : words(f.claim)}`
 // Merge, never drop: another reading of the same place joins it in `also`,
 // and the skeptic may refute the place only if every reading is wrong.
 // Keeping only the first let a refuted claim take a real one down with it.
+//
+// The loop routes on a finding's category (scope goes to a person, a misread
+// criterion is re-planned), so a merged finding leads with its weightiest
+// reading: a scope reading filed second must not hide behind a logic one.
+const WEIGHT = ['scope', 'criterion-unmet', 'rules', 'logic', 'test-proves-nothing', 'test-weakened', 'gate', 'conflict', 'spec-gap', 'docs-stale', 'other']
+const weight = (c) => { const i = WEIGHT.indexOf(c); return i < 0 ? WEIGHT.length : i }
+
 export function dedupe(fs) {
   const m = new Map()
   for (const f of fs) {
     const k = where(f)
     if (!m.has(k)) { m.set(k, { ...f, also: [...(f.also || [])] }); continue }
-    const g = m.get(k)
+    let g = m.get(k)
+    if (weight(f.category) < weight(g.category)) {
+      // The weightier reading leads; the one it displaces joins `also`.
+      const { also, ...prev } = g
+      g = { ...f, also: [{ category: prev.category, claim: prev.claim, evidence: prev.evidence }, ...also, ...(f.also || [])] }
+      m.set(k, g)
+      continue
+    }
     for (const r of [f, ...(f.also || [])]) {
       if (g.claim !== r.claim && !g.also.some((a) => a.claim === r.claim)) g.also.push({ category: r.category, claim: r.claim, evidence: r.evidence })
     }
@@ -170,6 +184,10 @@ export const brief = (s) => {
 }
 
 /** An agent's findings, capped and with the fields the loop needs. */
+// A finding with no file is kept: "nothing satisfies criterion 2" and a
+// ticket in question have no file to cite, and dropping them would read as
+// a clean audit.
 export const findingsOf = (report) =>
   (report && Array.isArray(report.findings) ? report.findings : []).slice(0, MAX_FINDINGS)
-    .filter((f) => f && f.claim && f.file)
+    .filter((f) => f && f.claim)
+    .map((f) => ({ ...f, file: f.file || '(the ticket)' }))

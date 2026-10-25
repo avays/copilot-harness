@@ -118,10 +118,30 @@ commands: {
 - **`testsOnly`** is what red-check uses. `{tests}` becomes a comma-separated list of
   `tests.id(file)` values. For Surefire that's class names. If red-check can't be made to work, set it
   to `null`: the harness says so in every PR's *Not verified* section.
-- **Private Maven repositories:** use `actions/setup-java`'s `server-id` and `settings-path` inputs in
-  the workflow files. If the extension's own build commands need the token as an environment variable, list it in
-  `copilot.extensionEnv`, because Copilot strips secrets from extension processes unless they are asked for
-  by name. *This hasn't been verified headless (§9).*
+- **Private Maven repositories:** the gate has to download dependencies, so the build job needs the
+  repository's credential, and **the agents will be able to read it**. Use a **read-only package token**
+  that can do nothing but download artifacts. Wire it like this in `harness-ship.yml` (and in
+  `harness-review.yml` if reviewers build):
+
+  ```yaml
+  - uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: "21"
+      server-id: company-maven            # the <id> in your pom's <repository>
+      server-username: MAVEN_USER         # names of env vars, not values
+      server-password: MAVEN_TOKEN
+  # …
+  - name: Build
+    env:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      MAVEN_USER: ${{ secrets.MAVEN_USER }}
+      MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}
+  ```
+
+  Copilot strips variables it considers sensitive from the extension process, which runs the gate. If the
+  gate can't authenticate, list the names in `copilot.extensionEnv`. *How that behaves headless hasn't
+  been verified (§9).*
 
 ### `paths`
 
@@ -265,17 +285,16 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 70 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 78 tests
   against a fake Copilot context.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
   environment: with it, git hands out no stored credential, and workflow-file edits are detected.
 - **Copilot CLI loads the extension and runs a harness workflow headless**, with the command line and
   environment `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it used (0 on
   CLI 1.0.103).
-- The workflow files pass `actionlint`.
-
-**Checked once by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
-definitions. Nothing re-runs that check, but `doctor --live` fails if registration does.
+**Checked by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
+definitions (`doctor --live` fails if registration does), and the workflow files pass
+[actionlint](https://github.com/rhysd/actionlint) (`actionlint .github/workflows/harness-*.yml`).
 
 **Not yet proved — check these in §7:**
 
@@ -298,26 +317,32 @@ definitions. Nothing re-runs that check, but `doctor --live` fails if registrati
 
 **Isolation — what the agents can and cannot reach:**
 
-- **In Actions:** agents run in the build job, whose only token is `COPILOT_GITHUB_TOKEN`. No process in
-  that job holds a GitHub token: the checkout keeps no credentials, and no step is given `GH_TOKEN`.
-  That matters because an agent can run arbitrary code (any test it writes runs), and on Linux a process
-  can read the environment of every process above it. Claiming and publishing are separate jobs that
-  run the base branch's harness, never the branch's code. The agents' work crosses as a git bundle, and
-  workflow files in it are never pushed. With `COPILOT_GITHUB_TOKEN` scoped to Copilot alone, an agent
-  that went wrong can spend Copilot credits and write commits a person will review, and nothing more.
+- **In Actions:** agents run in the build job. No step there is given a GitHub token, and the checkouts
+  keep no credentials. The job's own token is read-only (`contents: read`) and only the runner process
+  holds it. That matters because an agent can run arbitrary code (any test it writes runs), and on Linux
+  a process can read the environment of every process above it.
+- **Every job runs the base branch's harness.** The branch, or the pull request, is checked out
+  separately as the workspace the agents edit. So agents' changes to `harness/` or `harness.config.mjs`
+  can't change the loop, the round limits or the gate. Claiming and publishing never run branch code.
+  The agents' work crosses to publish as a git bundle, publish checks where it is going, and workflow
+  files are never pushed. The build job saves no cache other workflows could restore.
+- **So, with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone,** an agent that went wrong can spend Copilot
+  credits, read whatever the build job is given (a read-only package token, if you add one), and write
+  commits a person will review. Nothing more.
 - **On a laptop there is no isolation.** Agents run as you. `run.mjs` removes GitHub tokens and the ssh
-  agent from their environment and turns off git's credential helpers, so an ordinary `git push` fails.
-  But code an agent writes can still read your stored credentials (`~/.config/gh/hosts.yml`, keychains,
-  `~/.ssh`). Run real tickets in Actions. Locally, use a devcontainer, or a machine account with no push
-  rights, if the tickets are not ones you would run yourself.
+  agent from their environment, turns off git's credential helpers and points ssh at no key, so an
+  ordinary `git push` fails over https and ssh alike. But code an agent writes can still read your stored
+  credentials (`~/.config/gh/hosts.yml`, keychains, `~/.ssh`). Run real tickets in Actions. Locally, use
+  a devcontainer, or a machine account with no push rights, if the tickets are not ones you would run
+  yourself. Locally the harness that runs is the one in the checkout you run `run.mjs` from.
 
 **Known limits:**
 
 - **Dynamic workflows are in preview.** The API is marked experimental and the flag is required. Pin the
   CLI and re-run §7 whenever you change it.
-- **The review runs the extension from the PR branch,** in a job with only the Copilot token. A PR that
-  changes `harness/` runs its own version of the review. Pull requests from forks are never reviewed,
-  dispatched or not. A branch older than the harness is skipped with a notice.
+- **Pull requests from forks are never reviewed,** dispatched or not: their tree would be read by agents
+  holding this repository's Copilot token. Branches older than the harness are reviewed like any other,
+  because the harness comes from the base.
 - **No resume in CI.** A run that stops before publishing (a Copilot limit, the job timeout, a lost
   runner) leaves nothing pushed, so relabelling starts over. The publish job still runs, says so on the
   issue and labels it `needs-human`. A run that published a draft continues on its branch, so that work

@@ -41,7 +41,10 @@ export function setupAsk(config, a, writeSpec, specPath) {
     `Report the sizing facts about the change the ticket needs — what it touches and what it risks, not how ` +
     `long the ticket is. Open the files the change would land in before you answer: a guessed fact sizes the ` +
     `whole run wrong. Most tickets are small.` +
-    (writeSpec ? `\n\nIf you proceed and the change touches no business rule and no stored data, also write the spec: ${specAsk(config, specPath)} Return it as spec.` : '')
+    // The same rule sizing.mjs applies: a ticket that buys the full loop gets
+    // its own spec writer, so setup must not write one it would throw away.
+    (writeSpec ? `\n\nIf you proceed and the change touches no business rule, no stored data and none of these areas — ` +
+      `${config.sizing.heavyAreas.join(', ')} — also write the spec: ${specAsk(config, specPath)} Return it as spec.` : '')
 }
 
 export function implementAsk(config, specPath, carried, list) {

@@ -360,3 +360,35 @@ test('a renamed ticket keeps the spec path of the branch it continues on', async
   await run(ctx, { config: config(), deps: deps() })
   assert.match(ctx.calls.find((c) => c.label === 'write-spec').prompt, /specs\/7-return-404-for-a-retired-order\.md/)
 })
+
+test('a blocker with no file still counts: "nothing satisfies criterion 2" has no file to cite', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': { ...clean, findings: [blocker({ file: '', line: undefined, category: 'scope', claim: 'the ticket asks for 404 and 410' })] } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.equal(r.open[0].file, '(the ticket)')
+})
+
+test('a scope reading merged under a logic one at the same place still hands back', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({
+    'audit:criteria': { ...clean, findings: [blocker()] },
+    'audit:rules': { ...clean, findings: [blocker({ category: 'scope', claim: 'the ticket contradicts itself here' })] },
+  }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.match(r.reason, /ticket itself is in question/)
+})
+
+test('a spec blocker at a place already carried is not judged again', async () => {
+  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no test named for the empty case' })
+  const miss = blocker({ category: 'criterion-unmet', file: 'specs/7-x.md', line: 30, claim: 'wrong status' })
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [gap, miss] } : { ...clean, findings: [gap] }) }))
+  await run(ctx, { config: config(), deps: deps() })
+  assert.equal(ctx.calls.filter((c) => c.label.startsWith('skeptic:spec')).length, 2)
+})
+
+test('a heavy-area ticket is not asked to write a spec in setup', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script())
+  await run(ctx, { config: config({ sizing: { heavyAreas: ['harness', 'persistence'] } }), deps: deps() })
+  assert.match(ctx.calls[0].prompt, /none of these areas — harness, persistence/)
+})

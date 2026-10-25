@@ -78,11 +78,16 @@ const BUILT_IN_LENSES = { code: ['combined', 'criteria', 'rules'], spec: ['combi
 
 const plain = (v) => v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof RegExp)
 
-/** Deep merge: objects merge key by key; arrays, functions and regexes replace. */
+// Objects that describe the project as a whole are replaced, not merged: a
+// default `app` area beside the project's own would inflate every ticket's
+// area count.
+const REPLACE = new Set(['areas'])
+
+/** Deep merge: objects merge key by key; arrays, functions, regexes and REPLACE keys replace. */
 export function merge(base, over) {
   if (!plain(over)) return over === undefined ? base : over
   const out = { ...base }
-  for (const [k, v] of Object.entries(over)) out[k] = plain(v) && plain(base?.[k]) ? merge(base[k], v) : v
+  for (const [k, v] of Object.entries(over)) out[k] = plain(v) && plain(base?.[k]) && !REPLACE.has(k) ? merge(base[k], v) : v
   return out
 }
 
@@ -101,6 +106,9 @@ export function resolveConfig(user = {}) {
   for (const [name, t] of Object.entries(c.tiers)) {
     for (const k of t.codeLenses || []) if (!known.code.has(k)) problems.push(`tiers.${name}.codeLenses names "${k}", which is no lens`)
     for (const k of t.specLenses || []) if (!known.spec.has(k)) problems.push(`tiers.${name}.specLenses names "${k}", which is no lens`)
+    // A round with no lens records an audit that never happened.
+    if (t.specRounds > 0 && !(t.specLenses || []).length) problems.push(`tiers.${name} has spec rounds but no specLenses`)
+    if (!(t.codeLenses || []).length) problems.push(`tiers.${name} has no codeLenses`)
   }
   if (problems.length) throw new Error(`harness.config.mjs: ${problems.join('; ')}`)
   return c

@@ -7,9 +7,10 @@
 ## as the harness's, and each review spends AI credits. Narrow `on:` (a label,
 ## a branch prefix) if that is not what the team wants.
 ##
-## As in ship, the job that runs agents holds no GitHub token. It does run the
-## harness code on the pull request's branch, with the Copilot token, so pull
-## requests from forks are never reviewed.
+## As in ship, the job that runs agents is given no GitHub token, and every
+## job runs the base branch's harness: the pull request's tree is only what
+## the reviewers read. Pull requests from forks are never reviewed, because
+## the reviewers run with this repository's Copilot token.
 name: "Harness · review"
 
 on:
@@ -44,8 +45,10 @@ jobs:
       skip: ${{ steps.prepare.outputs.skip }}
       ref: ${{ steps.prepare.outputs.ref }}
     steps:
+      # The base, never the pull request: this job holds the GitHub token.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -71,19 +74,26 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The base's harness at the root; the pull request in the workspace.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.ref }}
+          path: .harness/worktrees/pr-${{ github.event.pull_request.number || inputs.pr }}
           fetch-depth: 0
           persist-credentials: false
 
       # ADAPT: the project's toolchain and JDK, if reviewers should be able to
       # build or run a single test to prove a claim. Remove if they only read.
+      # No `cache:`: this job runs the branch's code, and a cache it saved
+      # would be restored by other workflows. Restore-only is safe.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
 
       - uses: actions/setup-node@v4
         with:
@@ -100,19 +110,21 @@ jobs:
       - name: Review
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-        run: |
-          # A branch from before the harness was adopted has nothing to run.
-          if [ ! -f harness/bin/run.mjs ]; then
-            echo "::notice::This branch does not carry the harness; merge the base into it to review."
-            exit 0
-          fi
-          node harness/bin/run.mjs review "$PR" --phase build
+        run: node harness/bin/run.mjs review "$PR" --phase build
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: review-handoff-build
           path: .harness/handoff/review-*.build.json
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harness-review-runs
+          path: .harness/runs/
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore
@@ -129,15 +141,20 @@ jobs:
       # The base branch's harness posts the comment, not the PR's.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - uses: actions/download-artifact@v4
         with:
-          pattern: review-handoff-*
+          name: review-handoff-prepare
           path: .harness/handoff/
-          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: review-handoff-build
+          path: .harness/handoff/
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

@@ -56,9 +56,9 @@ These are why each piece exists. Keep them when you change the harness.
   The harness never restates them.
 - **AI never holds the GitHub token.** In Actions, ship and review are three jobs each. Claiming and
   publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
-  with no repository access. The work crosses between them as a git bundle, and is pushed by the base
-  branch's harness, never by code the agents wrote. Workflow files are never pushed. On a laptop
-  there is no such isolation (ADAPTING.md §9).
+  with no repository access. Every job runs the base branch's harness, and the branch is only the
+  workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
+  pushed. On a laptop there is no such isolation (ADAPTING.md §9).
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.
 

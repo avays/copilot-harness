@@ -118,3 +118,12 @@ test('with the agents\' environment, git hands out no stored credential', () => 
   assert.notEqual(agent.status, 0)
   rmSync(store, { force: true })
 })
+
+test('a workflow file with a quoted name is still found', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, '.github/workflows'), { recursive: true })
+  writeFileSync(join(dir, '.github/workflows/é.yml'), 'on: push\n')
+  writeFileSync(join(dir, '.github/workflows/tab\tx.yml'), 'on: push\n')
+  g('add', '-A'); g('commit', '-qm', 'odd names')
+  assert.deepEqual((await workflowEdits('origin/main', 'HEAD', dir)).sort(), ['.github/workflows/tab\tx.yml', '.github/workflows/é.yml'])
+})

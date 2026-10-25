@@ -73,6 +73,8 @@ const GITHUB_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'HARNESS_GH_TOKEN', 'GH_ENTER
 export function copilotEnv(env) {
   const out = { ...env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false', GIT_TERMINAL_PROMPT: '0' }
   for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK']) delete out[k]
+  // ssh would still read a passphrase-less key from ~/.ssh by itself.
+  out.GIT_SSH_COMMAND = 'ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityFile=/dev/null -o BatchMode=yes'
   // An empty credential.helper resets the helper list for every git call.
   const n = Number(out.GIT_CONFIG_COUNT || 0)
   Object.assign(out, { GIT_CONFIG_COUNT: String(n + 1), [`GIT_CONFIG_KEY_${n}`]: 'credential.helper', [`GIT_CONFIG_VALUE_${n}`]: '' })
@@ -155,7 +157,7 @@ function runCopilot(config, workflow, args, dir, cwd) {
       // Exit 0 is the only case where the result file is this run's; a
       // failed run leaves any earlier file untouched.
       if (code === 0 && existsSync(resultFile)) return done({ ...JSON.parse(readFileSync(resultFile, 'utf8')), usage })
-      done({ outcome: 'error', usage, reason: `copilot workflow run exited ${code}${status ? ` (${status})` : ''}` + (code === 2 ? ' — workflow not found or arguments invalid: is .github/extensions/harness/ on this branch?' : '') })
+      done({ outcome: 'error', usage, reason: `copilot workflow run exited ${code}${status ? ` (${status})` : ''}` + (code === 2 ? ' — workflow not found or arguments invalid: is .github/extensions/harness/ in this checkout?' : '') })
     })
   })
 }
@@ -194,10 +196,14 @@ async function worktreeFor(root, workdir, branch, onRemote, base) {
   if (onRemote) await must(['merge', '--ff-only', `origin/${branch}`], workdir, `git merge --ff-only origin/${branch} (the local branch has diverged from the pushed one)`)
 }
 
-/** Files under .github/workflows/ that a ref changes against the base. */
+/**
+ * Files under .github/workflows/ that a ref changes against the base. The
+ * pathspec does the filtering and -z turns off git's path quoting: filtered
+ * by prefix, a quoted name (non-ASCII, a tab) would slip past.
+ */
 export async function workflowEdits(baseRef, ref, cwd) {
-  return (await must(['diff', '--name-only', `${baseRef}...${ref}`], cwd, 'git diff'))
-    .split('\n').filter((f) => f.startsWith('.github/workflows/'))
+  return (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, '--', '.github/workflows/'], cwd, 'git diff'))
+    .split('\0').filter(Boolean)
 }
 
 // ── ship ─────────────────────────────────────────────────────────────────────
@@ -224,16 +230,23 @@ async function shipPrepare(opt, root, config) {
   return state
 }
 
+// The agents work in a workspace under .harness/worktrees/; Copilot runs
+// from the root, so the harness that runs — its loops, limits and gate — is
+// the root checkout's, never what an earlier attempt's agents left on the
+// branch. In Actions the root is the base branch.
+const workspace = (root, name) => join(root, '.harness', 'worktrees', name)
+
 async function shipBuild(opt, root, config, state) {
   const { branch, onRemote, base } = state
-  let workdir = root
+  const workdir = workspace(root, `issue-${opt.n}`)
   if (CI) {
-    // No credentials in this job, so no fetch: the checkout brought every
-    // branch (fetch-depth: 0).
-    await must(['checkout', '-B', branch, onRemote ? `origin/${branch}` : `origin/${base}`], root, 'git checkout')
+    // The workflow checked the branch (or the base) out here, with every
+    // branch fetched: this job has no credentials to fetch with.
+    if (!existsSync(workdir)) throw new Error(`no workspace at ${workdir} — the workflow's second checkout is missing`)
+    await must(['checkout', '-B', branch, onRemote ? `origin/${branch}` : `origin/${base}`], workdir, 'git checkout')
   } else {
     if (onRemote) await must(['fetch', 'origin', branch], root, `git fetch origin ${branch}`)
-    await worktreeFor(root, workdir = join(root, '.harness', 'worktrees', `issue-${opt.n}`), branch, onRemote, base)
+    await worktreeFor(root, workdir, branch, onRemote, base)
   }
   if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
   const dir = runDir(root, `ship-${opt.n}`)
@@ -241,7 +254,7 @@ async function shipBuild(opt, root, config, state) {
   const result = await runCopilot(config, 'harness-ship', {
     issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir,
     ...(state.notes ? { notes: state.notes } : {}), ...(state.size ? { size: state.size } : {}),
-  }, dir, workdir)
+  }, dir, root)
   result.issue ??= opt.n
   result.branch ??= branch
   result.title ??= t.title
@@ -261,7 +274,14 @@ async function shipBuild(opt, root, config, state) {
 }
 
 async function shipPublish(opt, root, config, state, built) {
-  const L = config.github.labels, n = opt.n, { base, branch, existing } = state
+  const L = config.github.labels, n = opt.n, base = config.base
+  // The hand-off came through artifacts the build job could have touched, so
+  // nothing in it decides where to push: the branch must be this ticket's
+  // harness branch, and the pull request is looked up again, not trusted.
+  const branch = String(state.branch || '')
+  if (!new RegExp(`^harness/${n}-[a-z0-9-]+$`).test(branch) || branch === base) throw new Error(`refusing to publish to "${branch}": not a harness branch for #${n}`)
+  const existing = await GH.openPrFor(branch, root)
+  if (built && built.bundle && built.bundle !== `ship-${n}.bundle`) throw new Error(`refusing an unexpected bundle name "${built.bundle}"`)
   // The build job timed out, was cancelled or lost its runner: say so, so
   // the ticket never sits claimed with nobody working on it.
   const result = built ? built.result : { outcome: 'error', reason: 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which' }
@@ -363,10 +383,11 @@ async function reviewPrepare(opt, root, config) {
 }
 
 async function reviewBuild(opt, root, config, state) {
-  let workdir = root
-  if (!CI) {
+  const workdir = workspace(root, `pr-${opt.n}`)
+  if (CI) {
+    if (!existsSync(workdir)) throw new Error(`no workspace at ${workdir} — the workflow's second checkout is missing`)
+  } else {
     await must(['fetch', 'origin', state.base], root, 'git fetch base')
-    workdir = join(root, '.harness', 'worktrees', `pr-${opt.n}`)
     // A named ref, not FETCH_HEAD: FETCH_HEAD belongs to one worktree, so a
     // second review could not see what the main checkout fetched.
     const ref = `refs/harness/pr-${opt.n}`
@@ -381,20 +402,13 @@ async function reviewBuild(opt, root, config, state) {
       await must(['worktree', 'add', '--detach', workdir, ref], root, 'git worktree add')
     }
   }
-  // A branch from before the harness was adopted has nothing to run. The
-  // review is advisory, so that is a notice, not a red check.
-  if (!existsSync(join(workdir, '.github', 'extensions', 'harness', 'extension.mjs'))) {
-    const result = { outcome: 'skipped', reason: `the branch does not carry the harness — merge ${state.base} into it to review` }
-    writeHandoff(root, opt, 'build', { result })
-    return result
-  }
   const diff = await facts(`origin/${state.base}`, workdir, config)
   const size = reviewSize(diff, config, { labelledFull: state.labels.includes(config.github.labels.full) })
   const dir = runDir(root, `review-${opt.n}`)
   const result = await runCopilot(config, 'harness-review', {
     pr: opt.n, title: state.title, body: state.body, base: state.base, workdir, size,
     ...(state.ticket ? { ticket: state.ticket } : {}),
-  }, dir, workdir)
+  }, dir, root)
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
   writeHandoff(root, opt, 'build', { result })
   return result

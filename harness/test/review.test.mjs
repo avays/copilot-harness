@@ -56,3 +56,8 @@ test('a blocker is not swallowed by a minor another lens filed at the same place
   assert.equal(r.verdict, 'fail')
   assert.equal(r.blockers.length, 1)
 })
+
+test('a review blocker with no file still fails the review', async () => {
+  const ctx = fakeCtx(ARGS, (l) => (l.startsWith('lens:') ? lensReport({ findings: [blocker({ file: '', line: undefined, category: 'criterion-unmet', claim: 'nothing satisfies criterion 2' })] }) : l.startsWith('skeptic:') ? { refuted: false, why: '' } : undefined))
+  assert.equal((await run(ctx, { config: config() })).verdict, 'fail')
+})

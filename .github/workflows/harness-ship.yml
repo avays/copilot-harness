@@ -7,8 +7,11 @@
 ##   publish — pushes, opens the PR, labels, comments            GitHub token
 ## An agent can read the environment of every process above it, so the only
 ## way to keep the GitHub token from agents is to keep it out of their job.
-## The work crosses from build to publish as a git bundle, and publish runs
-## the base branch's harness code, never the branch's.
+## Every job runs the base branch's harness; the branch is only the workspace
+## the agents edit. The work crosses from build to publish as a git bundle.
+##
+## Private Maven repository? See ADAPTING.md §4: its credential goes in the
+## Build step's env, and the agents can read it.
 ##
 ## Needs: a COPILOT_GITHUB_TOKEN secret (fine-grained PAT, owned by a person,
 ## with the "Copilot Requests" permission and no repository access).
@@ -82,20 +85,30 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Two checkouts. The root is the base branch: its harness is the one
+      # that runs, so agents' edits to harness/ on the branch never decide
+      # the loop. The branch (or the base, for a first attempt) goes in the
+      # workspace the agents edit, with every branch fetched — this job has
+      # no credentials to fetch with later.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.claim.outputs.ref }}
+          path: .harness/worktrees/issue-${{ github.event.issue.number || inputs.issue }}
           fetch-depth: 0
           persist-credentials: false
 
       # ADAPT: the project's own toolchain and JDK. The gate in
       # harness.config.mjs runs here, so this must match what the project
-      # builds with.
+      # builds with. No `cache:` — this job runs code the agents wrote, and a
+      # cache it saved would be restored by the project's other workflows. To
+      # speed it up, restore a cache without saving (actions/cache/restore).
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
 
       - uses: actions/setup-node@v4
         with:
@@ -159,11 +172,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # By exact name: a pattern would take any artifact the build job made.
       - uses: actions/download-artifact@v4
         with:
-          pattern: handoff-*
+          name: handoff-claim
           path: .harness/handoff/
-          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        # Absent when build failed or timed out; publish then reports that.
+        continue-on-error: true
+        with:
+          name: handoff-build
+          path: .harness/handoff/
       - name: Publish
         env:
           # A PAT lets the pull request start the project's other workflows

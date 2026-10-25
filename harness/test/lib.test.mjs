@@ -160,6 +160,7 @@ test('the agents\' environment turns off git credential helpers, prompts and the
   assert.equal(env.GIT_CONFIG_KEY_0, 'core.editor')
   assert.equal(env.GIT_CONFIG_KEY_1, 'credential.helper')
   assert.equal(env.GIT_CONFIG_VALUE_1, '')
+  assert.match(env.GIT_SSH_COMMAND, /IdentityFile=\/dev\/null/)
 })
 
 test('a draft lists why it stopped and what else is unresolved', () => {
@@ -177,4 +178,14 @@ test('the config refuses a tier lens that does not exist', () => {
 test('every pull request has a Not verified section', () => {
   const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [], notVerified: [] })
   assert.match(body, /## Not verified\n\n- Nothing beyond/)
+})
+
+test('the project\'s own areas replace the defaults instead of joining them', () => {
+  const c = config({ sizing: { areas: { web: 'controllers', harness: 'harness/' } } })
+  assert.deepEqual(Object.keys(c.sizing.areas), ['web', 'harness'])
+})
+
+test('the config refuses a tier that would audit nothing', () => {
+  assert.throws(() => config({ tiers: { full: { specLenses: [] } } }), /spec rounds but no specLenses/)
+  assert.throws(() => config({ tiers: { small: { codeLenses: [] } } }), /no codeLenses/)
 })
