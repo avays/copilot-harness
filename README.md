@@ -242,7 +242,7 @@ because everything is `.mjs` with no dependencies.
 | A private Maven repository | The build job needs its credential, and **the agents can read it** | Use a read-only package token; add it to the build step's env, `--preserve-env` and the artifact masking (ADAPTING §4) |
 | Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
-| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit (`git fetch origin && git reset --soft origin/<base> && git commit -S`, then force-push the `harness/*` branch: the harness has already merged the base in, so nothing else changes), or the mergers are given a bypass for the rule |
+| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit: `git fetch origin && git merge origin/<base>` first (the base has usually moved since the harness last merged it; resolve and run the gate), then `git reset --soft origin/<base> && git commit -S` and `git push --force-with-lease`. Or the mergers are given a bypass for the rule |
 | A commit message convention | Agents are told to follow the project's convention (with a Conventional Commits fallback such as `docs(spec): …` if it states none) | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
@@ -426,7 +426,7 @@ node harness/bin/run.mjs ship 42                # claim, build, open the PR
 node harness/bin/run.mjs ship 42 --full         # force the full loop (or --small; turns off escalation)
 node harness/bin/run.mjs review 57
 node harness/bin/run.mjs ship 42 --phase prepare|build|publish  # one phase, as the Actions jobs run them
-node --test harness/test/*.test.mjs   # the harness's own tests, about ten seconds
+node --test harness/test/*.test.mjs   # the harness's own tests, under half a minute
 ```
 
 On a laptop, each ticket gets a git worktree under `.harness/worktrees/`, so your own checkout is never
@@ -564,7 +564,7 @@ would go.
   Change how the loop runs in `harness/workflows/*.mjs`, with a test in `harness/test/` for each
   behaviour you change. Both audit loops share one set of stopping rules (`settle` and `streaks` in
   `ship.mjs`), so change them there, for both.
-- **Run `node --test harness/test/*.test.mjs` after every change** (about ten seconds, no network).
+- **Run `node --test harness/test/*.test.mjs` after every change** (under half a minute, no network).
 - **Keep the boundaries:** no GitHub calls inside a workflow; no GitHub credential in the build job; no
   project knowledge in `harness/`; no npm dependencies.
 

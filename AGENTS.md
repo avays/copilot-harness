@@ -28,5 +28,5 @@ describes. This file is for an agent changing the harness here; it is not copied
   workflow's `argsSchema` anything else is rejected at registration, and every workflow then fails to load.
 - **No npm dependencies.** The harness sits in projects that are not Node projects.
 - **Nothing project-specific in `harness/`.** Project knowledge belongs in `harness.config.mjs`.
-- Run `node --test harness/test/*.test.mjs` after every change (about ten seconds).
+- Run `node --test harness/test/*.test.mjs` after every change (under half a minute).
 - Copilot's own SDK docs ship with the CLI: `~/.cache/copilot/pkg/<platform>/<version>/copilot-sdk/docs/workflows.md`.

@@ -1,1 +1,0 @@
-<testsuite name="OrderApiTest" tests="1" failures="0" errors="0"><testcase name="retiredOrderIs404" classname="OrderApiTest" time="0.2"><system-out><![CDATA[GET /orders/9 -> 404 <error code="RETIRED">order 9 is retired</error>]]></system-out></testcase></testsuite>
