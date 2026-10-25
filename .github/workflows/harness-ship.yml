@@ -74,6 +74,8 @@ jobs:
           GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
           SIZE: ${{ inputs.size }}
         run: |
+          # The issue number names the workspace path too: digits only.
+          case "$ISSUE" in ''|*[!0-9]*|0*) echo "::error::issue must be a plain number, got '$ISSUE'"; exit 1 ;; esac
           gh auth setup-git
           case "${SIZE:-auto}" in
             auto) node harness/bin/run.mjs ship "$ISSUE" --phase prepare ;;

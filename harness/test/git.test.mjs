@@ -184,3 +184,15 @@ test('a local action the branch changes is refused like a workflow', async () =>
   g('add', '-A'); g('commit', '-qm', 'touch a local action')
   assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir), ['.github/actions/setup/action.yml'])
 })
+
+test('a workflow the base fixed after the branch began is caught too', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, '.github/workflows'), { recursive: true })
+  writeFileSync(join(dir, '.github/workflows/ci.yml'), 'old\n')
+  g('add', '-A'); g('commit', '-qm', 'old workflow'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  // The branch changes nothing under .github/; the base then fixes the workflow.
+  writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 404; }\n'); g('commit', '-qam', 'branch work')
+  g('checkout', '-q', '-b', 'later', 'origin/main'); writeFileSync(join(dir, '.github/workflows/ci.yml'), 'fixed\n'); g('commit', '-qam', 'fix'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  g('checkout', '-q', 'work')
+  assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir), ['.github/workflows/ci.yml'])
+})

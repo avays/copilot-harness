@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { loadConfig } from '../lib/config.mjs'
 import { repoEnv } from '../lib/github.mjs'
-import { copilotArgv, copilotEnv, readEvents, stageHarness } from './run.mjs'
+import { copilotArgv, copilotEnv, readEvents, stageHarness, winQuote } from './run.mjs'
 
 const live = process.argv.includes('--live')
 const results = []
@@ -97,7 +97,8 @@ if (live && config && cop.status === 0) {
   const i = argv.indexOf('--args'); argv.splice(i, 2)
   // Staged and loaded as a user extension, exactly as run.mjs does.
   const stage = stageHarness(root)
-  const r = run(config.copilot.bin, argv, { cwd: root, env: { ...copilotEnv(process.env), COPILOT_HOME: stage.home }, shell: process.platform === 'win32' })
+  const win = process.platform === 'win32'
+  const r = run(config.copilot.bin, win ? argv.map(winQuote) : argv, { cwd: root, env: { ...copilotEnv(process.env), COPILOT_HOME: stage.home }, shell: win })
   stage.cleanup()
   const ok = r.status === 0 && existsSync(join(dir, 'result.json'))
   const { usage } = readEvents(r.stdout || '')

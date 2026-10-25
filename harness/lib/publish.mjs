@@ -12,7 +12,8 @@ const ZWJ = '\u200d'
 // harmless. File paths go through code() instead, untouched.
 const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s*)(?=(?:[\w.-]+\/[\w.-]+)?#\d|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/gi
 const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.])@(?=[\w-])/g, `@${ZWJ}`)
-export const tame = (t) => inert(String(t ?? ''))
+// `<!--` too: agent text must not open a hidden comment, or carry a marker.
+export const tame = (t) => inert(String(t ?? '')).replace(/<!--/g, '&lt;!--')
 // A count from the build's report, printed only as a number.
 const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : '?')
 

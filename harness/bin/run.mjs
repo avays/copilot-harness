@@ -93,6 +93,8 @@ export function copilotEnv(env) {
   // COPILOT_ALLOW_ALL=true would trust the folder too. The step's command
   // files would let an agent set env or PATH for the job's later steps.
   for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK', 'GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS', 'COPILOT_ALLOW_ALL',
+    // The other prompt-mode opt-ins: the workspace's own hooks and MCP servers.
+    'GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS', 'GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP',
     'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_OUTPUT', 'GITHUB_STATE', 'GITHUB_STEP_SUMMARY']) delete out[k]
   // ssh would still read a passphrase-less key from ~/.ssh by itself.
   out.GIT_SSH_COMMAND = 'ssh -F /dev/null -o IdentitiesOnly=yes -o IdentityFile=/dev/null -o BatchMode=yes'
@@ -175,7 +177,10 @@ const RUN_STATE = /^(session-state|logs|history|.*\.lock)$/
 /** A Copilot config without folder trust. Unreadable JSON becomes {}: trust nothing. */
 export function untrusted(text) {
   let c
-  try { c = JSON.parse(text) } catch { return '{}' }
+  // Copilot writes config.json with `//` comment lines at the top: drop
+  // whole-line comments before parsing, or the sign-in would go with them.
+  const json = String(text).split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
+  try { c = JSON.parse(json) } catch { return '{}' }
   if (!c || typeof c !== 'object') return '{}'
   for (const k of Object.keys(c)) if (/trust/i.test(k)) delete c[k]
   return JSON.stringify(c, null, 2)
@@ -210,7 +215,8 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
   console.error(`harness: ${config.copilot.bin} ${argv.map((x) => (/\s/.test(x) ? JSON.stringify(x) : x)).join(' ')}`)
   const stage = stageHarness(root)
   return new Promise((done) => {
-    const p = spawn(config.copilot.bin, argv, {
+    const win = process.platform === 'win32'
+    const p = spawn(config.copilot.bin, win ? argv.map(winQuote) : argv, {
       cwd,
       env: { ...copilotEnv(process.env), COPILOT_HOME: stage.home },
       // npm installs copilot as a .cmd shim on Windows, which needs a shell.
@@ -221,7 +227,8 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
       stdio: ['ignore', 'pipe', 'inherit'],
     })
     let out = '', timedOut = false, settled = false, exitCode = null
-    const killGroup = () => { if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} } else { try { p.kill('SIGKILL') } catch {} } }
+    // On Windows the child is cmd.exe: taskkill /T takes Copilot and its tree with it.
+    const killGroup = () => { if (!win) { try { process.kill(-p.pid, 'SIGKILL') } catch {} } else { try { spawn('taskkill', ['/pid', String(p.pid), '/T', '/F']) } catch {} } }
     // Below the job's own timeout, so the step still ends by itself and the
     // cleanup after it runs: a job that times out runs nothing else in the step.
     // 'close' waits for every holder of Copilot's stdout, and a process that
@@ -293,9 +300,17 @@ async function worktreeFor(root, workdir, branch, onRemote, base) {
  * by prefix, a quoted name (non-ASCII, a tab) would slip past.
  */
 export async function workflowEdits(baseRef, ref, cwd) {
-  return (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, '--', '.github/workflows/', '.github/actions/'], cwd, 'git diff'))
-    .split('\0').filter(Boolean)
+  // From the merge base (what the branch changed), and tree against tree: a
+  // branch with an old merge base could otherwise bring back a workflow the
+  // base has since fixed.
+  const paths = ['--', '.github/workflows/', '.github/actions/']
+  const since = (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, ...paths], cwd, 'git diff')).split('\0')
+  const trees = (await must(['diff', '--name-only', '-z', baseRef, ref, ...paths], cwd, 'git diff')).split('\0')
+  return [...new Set([...since, ...trees])].filter(Boolean)
 }
+
+// cmd.exe, which runs npm's .cmd shim, splits unquoted arguments at spaces.
+export const winQuote = (a) => `"${String(a).replace(/"/g, '""')}"`
 
 // ── ship ─────────────────────────────────────────────────────────────────────
 async function shipPrepare(opt, root, config) {

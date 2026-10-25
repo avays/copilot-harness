@@ -65,9 +65,10 @@ export function lastHandBack(comments, marker, harness) {
   comments.forEach((c, i) => {
     const body = String(c.body || '')
     if (!body.includes(marker) || (harness && !sameLogin(c.author && c.author.login, harness))) return
-    const tag = body.slice(body.indexOf(marker))
+    // The harness's own marker ends its comment: the last one is it.
+    const tag = body.slice(body.lastIndexOf(marker))
     mine.push({ i, c, outcome: (/outcome=(\w+)/.exec(tag) || [])[1] || 'handback',
-      claimed: (/claimed=([0-9T:.\-Z]+)/.exec(tag) || [])[1] || c.createdAt, text: body.slice(0, body.indexOf(marker)).trim() })
+      claimed: (/claimed=([0-9T:.\-Z]+)/.exec(tag) || [])[1] || c.createdAt, text: body.slice(0, body.lastIndexOf(marker)).trim() })
   })
   const segments = [[]]
   for (const m of mine) {
@@ -119,8 +120,11 @@ export const pr = (n, cwd) =>
   gh(`pr view ${Number(n)} --json number,title,body,baseRefName,headRefName,isDraft,isCrossRepository,labels,url,closingIssuesReferences`, { cwd, json: true })
     .then((p) => ({ ...p, labels: (p.labels || []).map((l) => l.name) }))
 
+// --head matches a branch name in any fork too, and harness branch names are
+// predictable: only a pull request from this repository is the harness's.
 export const openPrFor = async (branch, cwd) =>
-  (await gh(`pr list --head ${q(branch)} --state open --json number,isDraft,url`, { cwd, json: true }))[0] || null
+  (await gh(`pr list --head ${q(branch)} --state open --json number,isDraft,url,isCrossRepository`, { cwd, json: true }))
+    .find((p) => p.isCrossRepository === false) || null
 
 /** Add and remove labels; a label that is already absent is not an error. */
 export async function relabel(n, { add = [], remove = [] }, cwd) {

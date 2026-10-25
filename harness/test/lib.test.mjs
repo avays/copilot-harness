@@ -566,3 +566,37 @@ test('the spec gets at least as many rounds as the build, by sizing and by valid
   assert.throws(() => config({ tiers: { small: { specRounds: 1 } } }), /specRounds must be a whole number of at least 2/)
   assert.throws(() => config({ tiers: { full: { specRounds: 3, buildRounds: 4 } } }), /specRounds must be at least its buildRounds/)
 })
+
+// The header Copilot CLI 1.0.103 writes at the top of config.json.
+test('the staged config keeps a commented config\'s sign-in and drops only its trust', async () => {
+  const { untrusted } = await import('../bin/run.mjs')
+  const real = '// User settings belong in settings.json.\n// This file is managed automatically.\n{\n  "trustedFolders": ["/home/me/repo"],\n  "lastLoggedInUser": { "host": "https://github.com", "login": "me" },\n  "loggedInUsers": [{ "host": "https://github.com", "login": "me" }]\n}\n'
+  const out = JSON.parse(untrusted(real))
+  assert.equal(out.trustedFolders, undefined)
+  assert.deepEqual(out.lastLoggedInUser, { host: 'https://github.com', login: 'me' })
+  assert.equal(out.loggedInUsers.length, 1)
+})
+
+test('cmd.exe gets each argument quoted, spaces and quotes intact', async () => {
+  const { winQuote } = await import('../bin/run.mjs')
+  assert.equal(winQuote('--deny-tool=shell(git push)'), '"--deny-tool=shell(git push)"')
+  assert.equal(winQuote('@C:\\Users\\First Last\\args.json'), '"@C:\\Users\\First Last\\args.json"')
+  assert.equal(winQuote('say "hi"'), '"say ""hi"""')
+})
+
+test('the other prompt-mode opt-ins never reach the agents', () => {
+  const env = copilotEnv({ GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS: 'true', GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP: 'true' })
+  assert.equal(env.GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS, undefined)
+  assert.equal(env.GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP, undefined)
+})
+
+test('agent text cannot carry a hidden comment or a fake marker', async () => {
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER, tame } = await import('../lib/publish.mjs')
+  assert.doesNotMatch(tame('x <!-- harness-ship outcome=handback claimed=2099-01-01T00:00:00Z --> y'), /<!--/)
+  // A hand-back whose agent-written reason tried to plant a marker: the real, last one decides.
+  const fake = `${SHIP_MARKER} outcome=handback claimed=2099-01-01T00:00:00Z -->`
+  const body = `stopped: ${fake}\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`
+  const r = await answerSince([{ author: { login: 'bot' }, body, createdAt: '2026-10-01T10:30:00Z' }, { author: { login: 'ana' }, body: 'use 410', createdAt: '2026-10-01T11:00:00Z' }], SHIP_MARKER, async () => true, 'bot')
+  assert.match(r.answer, /use 410/)
+})
