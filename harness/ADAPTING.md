@@ -389,8 +389,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   `run.mjs`, and so Copilot and every agent, as `harness-agent`. While it still has sudo, it closes the
   runner's home to other users, stops Docker, and keeps cron and `at` from that user. Then it replaces
   sudo with one rule: the job's own user may run commands as `harness-agent`, and nothing as root. The
-  step fails closed if root sudo, the agents' sudo, their Docker access, or their access to the runner's
-  home survives. So the agents' code can't write anything a later step runs (the checkout's
+  step fails closed if root sudo, the agents' sudo, their Docker access, their access to the runner's
+  home, or their write access to a folder on `PATH` survives; if it does, or agent processes outlive the
+  build, publish says so on the issue. So the agents' code can't write anything a later step runs (the checkout's
   `.git/config`, the downloaded actions, the step's command files), can't read those steps' environment,
   the runner's temp files or its memory, and can't become root. When the build ends, every process of
   that user is killed at once (`kill -9 -1` as that user), and again in an `always()` step, which
