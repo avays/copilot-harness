@@ -26,7 +26,8 @@ const ghEnv = { ...process.env, ...(await repoEnv(root)) }
 check('inside a git repository', top.status === 0, root)
 
 const [major] = process.versions.node.split('.').map(Number)
-check('Node 20 or newer', major >= 20, process.versions.node)
+const [, minor] = process.versions.node.split('.').map(Number)
+check('Node 20.11 or newer', major > 20 || (major === 20 && minor >= 11), process.versions.node)
 
 let config = null
 try { config = await loadConfig(root); check('harness.config.mjs loads', true) } catch (e) { check('harness.config.mjs loads', false, e.message) }

@@ -48,7 +48,7 @@ Three workflows, all triggered from GitHub:
 | Workflow | Starts when | What it produces |
 | --- | --- | --- |
 | **Harness · ship** | an issue is labelled `ready-for-ai` (or dispatched by hand) | a pull request labelled `ready-for-human`, or a **draft** labelled `needs-human` with the reason and every open finding |
-| **Harness · review** | a pull request is opened, marked ready or reopened (and after every ship that opens one) | one advisory comment: a verdict, a *confidence* that means coverage, the confirmed blockers and notes |
+| **Harness · review** | a pull request is opened, marked ready or reopened (and after every ship that opens a ready one) | one advisory comment: a verdict, a *confidence* that means coverage, the confirmed blockers and notes |
 | **Harness · setup** | dispatched once, by hand | the labels, plus a no-cost check that Copilot can load the harness |
 
 What ends up on a harness pull request:
@@ -210,7 +210,7 @@ about 30 minutes. Then:
 2. **Add** the files on a branch, with no changes to existing ones except `.gitignore`, and set `base`.
 3. **Point** the config at the team's existing instructions, and write down the migration decisions.
 4. **Configure** the gate, the paths and the workflow files for this build.
-5. **Set** two secrets and one repository setting.
+5. **Set** the Copilot secret, and either a PAT or one repository setting.
 6. **Prove** it, cheapest first, then merge the adoption branch.
 7. **Roll out**: one small ticket, then a handful, then the team's normal flow.
 
@@ -243,7 +243,7 @@ because everything is `.mjs` with no dependencies.
 | Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
 | Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds, and merge harness PRs by squash or rebase in GitHub, which signs the result |
-| A commit message convention | Agents follow the project's instructions for commit messages | Make sure the convention is written in the instruction files |
+| A commit message convention | Agents are told to follow the project's convention (with a Conventional Commits fallback such as `docs(spec): …` if it states none) | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
 | CODEOWNERS | Requests reviewers on harness PRs like any other | Nothing; that is the intended human review |
@@ -274,7 +274,7 @@ Agree these before the first ticket. Each one is a setting or a sentence in the 
 - **The organisation's policy allows Copilot CLI.**
 - **The build runs headless on a clean Ubuntu runner**: `./mvnw -B -ntp verify` in a fresh clone,
   without a local server, an IDE or a developer's `~/.m2`.
-- **Actions enabled** on the repository, and Node 20+ available on runners (`setup-node` does it).
+- **Actions enabled** on the repository, and Node 20.11+ available on runners (`setup-node` does it).
 
 ### 2. Add the files on a branch
 
@@ -290,7 +290,8 @@ cp /tmp/copilot-harness/harness.config.mjs ./harness.config.mjs
 mkdir -p .github/extensions .github/workflows
 cp -r /tmp/copilot-harness/.github/extensions/harness .github/extensions/
 cp /tmp/copilot-harness/.github/workflows/harness-*.yml .github/workflows/
-grep -qxF '.harness/' .gitignore 2>/dev/null || echo '.harness/' >> .gitignore
+# (a newline first if the file doesn't end in one, or the entry joins its last line)
+grep -qxF '.harness/' .gitignore 2>/dev/null || { [ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ] && echo >> .gitignore; echo '.harness/' >> .gitignore; }
 
 npm install -g @github/copilot@1.0.103 && copilot login   # once, for doctor --live and local runs
 node harness/bin/doctor.mjs     # lists what is still to do; the labels ✗ clears after Harness · setup
@@ -300,7 +301,7 @@ Then set **`base`** in `harness.config.mjs` to the branch work starts from and p
 ships as `main`; a legacy repository is often on `master` or `develop`, and doctor fails until `base`
 names a branch that exists on `origin`.
 
-Commit that as one commit with nothing changed yet. The team's own adaptations then show up as a
+Commit that as one commit, with nothing changed yet but `base` (below). The team's own adaptations then show up as a
 reviewable diff on top of it.
 
 ### 3. Point it at the team's instructions
@@ -542,7 +543,7 @@ would go.
 | `harness/workflows/ship.mjs` | The ship loop: spec audit, build, code audit |
 | `harness/workflows/review.mjs` | The review loop |
 | `harness/workflows/ping.mjs` | A no-agent workflow that proves the wiring for free |
-| `harness/lib/prompts.mjs` | Every word an agent is told, in one place |
+| `harness/lib/prompts.mjs` | Every word an agent is told, ship's and review's, in one place |
 | `harness/lib/gate.mjs`, `red-check.mjs`, `git.mjs` | The commands that decide facts |
 | `harness/lib/sizing.mjs`, `findings.mjs` | Sizing rules; schemas and finding comparison |
 | `harness/lib/github.mjs`, `publish.mjs` | GitHub reads and writes; PR and comment bodies |

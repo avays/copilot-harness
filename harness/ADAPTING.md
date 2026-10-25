@@ -20,7 +20,7 @@ reads them; it never replaces or restates them.
 | A Copilot plan with **token-based billing** | Dynamic workflows refuse to run on the legacy request-based plans (JSON-RPC `-32601`, `dynamic_workflows_unavailable`) | §7's ping fails with that code |
 | The org policy allowing **Copilot CLI** | Headless runs are Copilot CLI | `copilot --version`, then §7 |
 | A build that runs **headless on a clean Ubuntu runner** | The gate runs it every round | `./mvnw -B -ntp verify` in a fresh clone |
-| Node 20+ on the runner | The harness is plain Node, with no npm dependencies | `node --version` |
+| Node 20.11+ on the runner | The harness is plain Node, with no npm dependencies | `node --version` |
 | Somewhere for **tickets** | The harness reads GitHub Issues | `gh issue list` |
 | The **base branch** named in config | `base` in `harness.config.mjs` (default `main`): the branch work starts from and PRs target. Legacy repositories are often on `master` or `develop` | doctor fails until `origin/<base>` exists |
 
@@ -133,7 +133,9 @@ commands: {
 },
 ```
 
-- **`gate`** is the definition of green. Every command must exit 0. Put everything a reviewer would ask
+- **`gate`** is the definition of green. Every command must exit 0, and the tree must be clean afterwards
+  (`git status` empty): build output the project doesn't ignore, or a formatter in apply mode, keeps
+  every gate red. Put everything a reviewer would ask
   for here: tests, static checks, the formatter in check mode. It runs every round, so several gates,
   plus the agents' time, must fit inside `copilot.timeoutMinutes` (100 by default; keep it below the
   build job's `timeout-minutes`, 120). A review's Copilot run has its own `review.timeoutMinutes` (35;
@@ -454,8 +456,8 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   that reaches GitHub inert (no closing keywords, no @mentions) or a plain number.
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
   read that token, and anything else the build job gives it (a read-only package token, if you add
-  one), and **send it out**, since its code has the network. The harness masks the token in what it
-  uploads and posts, but it can't stop deliberate exfiltration, so spend is bounded by the token's
+  one), and **send it out**, since its code has the network. The harness masks the token in the text files it
+  uploads and the text it posts (not in the commits, which travel as a bundle), but it can't stop deliberate exfiltration, so spend is bounded by the token's
   lifetime, not by `copilot.timeoutMinutes` or `copilot.limits`. Give the token a short expiry, keep it
   on a dedicated account, and revoke it if a run looks wrong. Beyond that, an agent can write commits
   a person will review;

@@ -24,7 +24,8 @@ describes. This file is for an agent changing the harness here; it is not copied
 - **Every `ctx.agent` call needs a unique label.** Copilot memoizes identical calls, so two calls with
   the same prompt and label share one agent. The tests check this.
 - **Schemas use Copilot's subset:** `type`, `required`, `enum`, `const`, `properties`/`items`,
-  `anyOf`/`oneOf`/`allOf`. Anything else is ignored, so apply limits in code.
+  `anyOf`/`oneOf`/`allOf`. In an agent's schema anything else is ignored, so apply limits in code; in a
+  workflow's `argsSchema` anything else is rejected at registration, and every workflow then fails to load.
 - **No npm dependencies.** The harness sits in projects that are not Node projects.
 - **Nothing project-specific in `harness/`.** Project knowledge belongs in `harness.config.mjs`.
 - Run `node --test harness/test/*.test.mjs` after every change (about ten seconds).

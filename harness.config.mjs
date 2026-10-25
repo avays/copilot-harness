@@ -16,6 +16,8 @@ export default {
     'AGENTS.md',
     '.github/copilot-instructions.md',
     '.github/instructions/',
+    // What the audits keep catching, written by Learn (paths.lessons below).
+    'docs/harness-lessons.md',
   ],
 
   // One paragraph a fresh agent reads instead of re-learning the repo from

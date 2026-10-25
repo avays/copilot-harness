@@ -46,7 +46,7 @@ export function specAsk(config, path) {
   return `Write the spec at ${path}, following the shape of harness/templates/spec.md. Its *Where* names the ` +
     `files, the functions and the test file, so the builder searches for nothing. Its *How it will be proved* ` +
     `maps every Done-when criterion to a test that fails today and passes once built. Record each choice the ` +
-    `ticket left open under *Decisions*. Commit it on its own as "docs(spec): …" and write no code. Return each ` +
+    `ticket left open under *Decisions*. Commit it on its own (in the project's commit convention; "docs(spec): …" if it has none) and write no code. Return each ` +
     `Decision as a yes/no question for the reviewer.`
 }
 
@@ -65,7 +65,7 @@ export function setupAsk(config, a, writeSpec, specPath) {
 
 export function implementAsk(config, specPath) {
   return `Implement ${specPath}. Its *Where* is your map: open those files directly. Write the test first and ` +
-    `confirm it fails for the reason you expect, then commit it on its own, red, as "test(…)" — that commit is ` +
+    `confirm it fails for the reason you expect, then commit it on its own, red (in the project's commit convention; "test(…)" if it has none) — that commit is ` +
     `the evidence the test proves something. Then make the change` +
     (config.commands.quick ? `, running \`${config.commands.quick}\` after each edit` : '') + `. ` +
     `Every state the change adds gets its own assertion: each branch, the empty case, the error path. Commit in ` +
@@ -80,7 +80,7 @@ export function reviseAsk(specPath, open, list) {
     `Revise the spec to resolve each one at its cause — or, if the ticket itself is wrong, record that under ` +
     `*Decisions*. A technical question the ticket does not settle is yours to decide: decide it and record it ` +
     `under *Decisions*. These confirmed findings are reason enough to change the spec, on an earlier attempt's ` +
-    `branch too. Fresh auditors will read the revised spec. Commit ("docs(spec): …"). Return decisions ` +
+    `branch too. Fresh auditors will read the revised spec. Commit (in the project's commit convention; "docs(spec): …" if it has none). Return decisions ` +
     `as EVERY Decision now in the spec, old and new.`
 }
 
@@ -118,6 +118,25 @@ export const CODE_LENSES = {
   rules: (base) => `Read \`git diff ${base}...HEAD\` against the project's instructions. A blocker is a rule ` +
     `they record being broken — quote the rule and the line. Also: a logic error, with an input and the wrong ` +
     `output it produces.`,
+}
+
+// A review's lenses. "The spec" is the one the diff adds, if any: a pull
+// request a person wrote usually has none.
+const SPEC_IN_DIFF = 'then the spec the diff adds, if any'
+export const REVIEW_LENSES = {
+  combined: (base) => CODE_LENSES.combined(base).replace('then the spec', SPEC_IN_DIFF),
+  criteria: (base) => CODE_LENSES.criteria(base).replace('then the spec', SPEC_IN_DIFF),
+  rules: (base) => CODE_LENSES.rules(base),
+  tests: (base) => `Read the tests in \`git diff ${base}...HEAD\`. A blocker is a test that would pass ` +
+    `without the change, asserts the implementation against itself, or an existing test weakened, disabled or ` +
+    `deleted when the ticket did not ask for that behaviour to change.`,
+}
+
+export function reviewAsk(a, ticket, lensAsk) {
+  return `Review pull request #${a.pr}: ${a.title}\n\n${a.body || ''}\n\n${ticket}\n\n` +
+    `Read the ticket first, then the diff. Your lens only: ${lensAsk}\n\n` +
+    `A blocker must name a realistic path to harm — who reaches it and what they lose. Anything less is minor. ` +
+    `Change no code. Empty is a good answer.`
 }
 
 export function auditAsk({ lensAsk, specPath, gateLine, sha, tampered, list }) {
@@ -169,6 +188,6 @@ export function learnAsk(config, history, list, outcome) {
   return `Independent audits of this branch confirmed these problems — ${outcome}:\n\n${list(history)}\n\n` +
     `Which of them is a class of mistake the next ticket could repeat — something the project's instructions ` +
     `did not tell the builder? For each, add one or two plain sentences to ${config.paths.lessons} (create it if ` +
-    `needed): the rule, and why, in the voice of the project's docs. Skip one-off slips. Commit as ` +
-    `"docs(lessons): …". Return what you wrote; an empty list is a good answer.`
+    `needed): the rule, and why, in the voice of the project's docs. Skip one-off slips. Commit (in the project's ` +
+    `commit convention; "docs(lessons): …" if it has none). Return what you wrote; an empty list is a good answer.`
 }

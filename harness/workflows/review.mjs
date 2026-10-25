@@ -34,16 +34,7 @@ export const meta = {
 
 const LEVELS = ['low', 'medium', 'high']
 
-const LENSES = {
-  // "The spec" is the one the diff adds under the specs folder, if any; a
-  // pull request a person wrote usually has none.
-  combined: (base) => P.CODE_LENSES.combined(base).replace('then the spec', 'then the spec the diff adds, if any'),
-  criteria: (base) => P.CODE_LENSES.criteria(base).replace('then the spec', 'then the spec the diff adds, if any'),
-  rules: (base) => P.CODE_LENSES.rules(base),
-  tests: (base) => `Read the tests in \`git diff ${base}...HEAD\`. A blocker is a test that would pass ` +
-    `without the change, asserts the implementation against itself, or an existing test weakened, disabled or ` +
-    `deleted when the ticket did not ask for that behaviour to change.`,
-}
+const LENSES = P.REVIEW_LENSES
 
 export async function run(ctx, { config }) {
   const a = ctx.args
@@ -70,10 +61,7 @@ export async function run(ctx, { config }) {
   // No lens sees another's opinion or the PR thread: a stated opinion pulls a
   // reader towards it.
   const lens = (l, retry) => ctx.agent(
-    `${COMMON}\n\nReview pull request #${a.pr}: ${a.title}\n\n${a.body || ''}\n\n${ticket}\n\n` +
-    `Read the ticket first, then the diff. Your lens only: ${l.ask}\n\n` +
-    `A blocker must name a realistic path to harm — who reaches it and what they lose. Anything less is minor. ` +
-    `Change no code. Empty is a good answer.`,
+    `${COMMON}\n\n${P.reviewAsk(a, ticket, l.ask)}`,
     { label: `lens:${l.key}${retry}`, schema: REVIEW_LENS, model: m(l.model || plan.model) },
   )
   const first = await ctx.parallel(lenses.map((l) => () => lens(l, '')))
