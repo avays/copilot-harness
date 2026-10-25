@@ -33,6 +33,13 @@ export const continuing = (a, specPath) => a.continuing
     `behaviour, the earlier attempt's own tests may change with it. Do not start over.\n\n`
   : ''
 
+// The same, for a reader: an auditor judges the earlier attempt, it does not build on it.
+export const continuingAudit = (a) => a.continuing
+  ? `This branch carries an earlier attempt at this ticket, which a person handed back (their answer, if any, is ` +
+    `in the notes above). Judge the spec and the code as they stand now; "a test that fails" means one that ` +
+    `fails on the base, not on this branch.\n\n`
+  : ''
+
 export const criteria = (doneWhen) => `Done when:\n${doneWhen.map((c) => `- ${c}`).join('\n')}`
 
 export function specAsk(config, path) {
@@ -123,7 +130,7 @@ export function specAuditAsk({ lensAsk, specPath }) {
     `else is minor. Use category scope only when the TICKET itself is contradictory, unclear about what to ` +
     `build, or impossible as written — that goes to a person; a flaw in the plan is spec-gap or logic, and ` +
     `work in the spec the ticket did not ask for is criterion-unmet, not scope. Cite ` +
-    `file and line. Empty is a good answer.`
+    `file and line. Change nothing. Empty is a good answer.`
 }
 
 // Every blocker faces a skeptic before it costs a fix round. A false positive

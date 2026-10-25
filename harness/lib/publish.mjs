@@ -77,9 +77,15 @@ export function shipPrBody(r) {
 // people's comments after the last one as their answer (run.mjs).
 export const SHIP_MARKER = '<!-- harness-ship'
 
-/** `claimed`: when this run claimed the ticket; comments after it answer this one. */
+/**
+ * `claimed`: when this run claimed the ticket; comments after it answer this
+ * one. The outcome says whether the comment asks a person anything: only a
+ * hand-back or a decline does, so an error or a pull request never hides an
+ * answer to the question before it.
+ */
 export function shipIssueComment(r, url, claimed = new Date().toISOString()) {
-  return shipIssueText(r, url) + `\n\n${SHIP_MARKER} claimed=${claimed} -->`
+  const outcome = r.outcome === 'pr' ? 'pr' : r.outcome === 'error' ? 'error' : r.outcome === 'declined' ? 'declined' : 'handback'
+  return shipIssueText(r, url) + `\n\n${SHIP_MARKER} outcome=${outcome} claimed=${claimed} -->`
 }
 
 function shipIssueText(r, url) {

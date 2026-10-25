@@ -48,11 +48,22 @@ export const issue = (n, cwd) =>
  * answer is every comment since then: one posted while that run was still
  * working is an answer too.
  */
+// GraphQL (gh issue view) and REST name an app differently: `github-actions`
+// against `github-actions[bot]`, sometimes `app/…`. Compare them as one.
+export const sameLogin = (a, b) => {
+  const n = (x) => String(x || '').toLowerCase().replace(/^app\//, '').replace(/\[bot\]$/, '')
+  return n(a) === n(b)
+}
+
 export function lastHandBack(comments, marker, harness) {
   for (let i = comments.length - 1; i >= 0; i--) {
     const c = comments[i], body = String(c.body || '')
-    if (!body.includes(marker) || (harness && (c.author && c.author.login) !== harness)) continue
-    const claimed = (/claimed=([0-9T:.\-Z]+)/.exec(body.slice(body.indexOf(marker))) || [])[1] || c.createdAt
+    if (!body.includes(marker) || (harness && !sameLogin(c.author && c.author.login, harness))) continue
+    const tag = body.slice(body.indexOf(marker))
+    // An error or a pull request asks nobody anything: look further back.
+    const outcome = (/outcome=(\w+)/.exec(tag) || [])[1] || 'handback'
+    if (!['handback', 'declined'].includes(outcome)) continue
+    const claimed = (/claimed=([0-9T:.\-Z]+)/.exec(tag) || [])[1] || c.createdAt
     const text = body.slice(0, body.indexOf(marker)).trim()
     const after = comments.filter((x) => x !== c && (x.createdAt || '') > (claimed || '') && !String(x.body || '').includes(marker))
     return { text, after }

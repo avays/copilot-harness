@@ -574,3 +574,12 @@ test('a fixer that says it cannot resolve the findings hands back with its reaso
   assert.match(r.reason, /could not resolve them: the ticket needs a schema change/)
   assert.equal(ctx.calls.filter((c) => c.label.startsWith('audit:')).length, 1)
 })
+
+test('a spec auditor on a continuing run is told to judge, not to build', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, continuing: true, size: 'full' }, script())
+  await run(ctx, { config: config(), deps: deps() })
+  const p = ctx.calls.find((c) => c.label === 'spec-audit:criteria#1').prompt
+  assert.match(p, /Judge the spec and the code as they stand now/)
+  assert.match(p, /Change nothing\./)
+  assert.doesNotMatch(p, /Do not start over/)
+})

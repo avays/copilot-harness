@@ -99,8 +99,13 @@ export function merge(base, over) {
 export function resolveConfig(user = {}) {
   const c = merge(DEFAULTS, user)
   const problems = []
-  if (!Array.isArray(c.commands.gate) || !c.commands.gate.length) problems.push('commands.gate needs at least one command')
-  for (const g of c.commands.gate || []) if (!g || !g.name || !g.run) problems.push('every commands.gate entry needs a name and a run')
+  if (!Array.isArray(c.commands.gate) || !c.commands.gate.length) problems.push('commands.gate needs at least one command, as a list of { name, run }')
+  else if (c.commands.gate.some((g) => !g || !g.name || !g.run)) problems.push('every commands.gate entry needs a name and a run')
+  // These are called mid-run: a wrong type would crash after credits are spent.
+  for (const k of ['isTest', 'id']) if (typeof c.tests[k] !== 'function') problems.push(`tests.${k} must be a function of a file path`)
+  for (const k of ['weakenedIfRemoved', 'weakenedIfAdded']) if (!(c.tests[k] instanceof RegExp)) problems.push(`tests.${k} must be a regular expression`)
+  for (const k of ['code', 'spec']) if (!Array.isArray(c.lenses[k])) problems.push(`lenses.${k} must be a list of lenses`)
+  if (problems.length) throw new Error(`harness.config.mjs: ${problems.join('; ')}`)
   for (const t of Object.values(c.tiers)) {
     for (const k of ['think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)
   }

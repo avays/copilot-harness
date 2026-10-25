@@ -371,7 +371,7 @@ test('a hand-back that pushed nothing does not promise the same branch', () => {
   assert.match(shipIssueComment(back, 'https://github.com/o/r/pull/3'), /continues on the same branch/)
   assert.match(shipIssueComment(back, ''), /Nothing was pushed, so it starts over/)
   // Without its marker the next run could never find the hand-back.
-  assert.match(shipIssueComment(back, '', '2026-10-01T10:00:00Z'), /<!-- harness-ship claimed=2026-10-01T10:00:00Z -->$/)
+  assert.match(shipIssueComment(back, '', '2026-10-01T10:00:00Z'), /<!-- harness-ship outcome=handback claimed=2026-10-01T10:00:00Z -->$/)
 })
 
 test('a process that left the group and holds Copilot\'s output cannot stall the run', async () => {
@@ -413,9 +413,43 @@ test('every field of the build\'s report that reaches GitHub is tamed or a numbe
   const { reviewComment } = await import('../lib/publish.mjs')
   const evil = '@octocat fixes #1'
   const body = shipPrBody({ outcome: 'handback', issue: 7, title: 't', branch: 'b', phase: evil, reason: 'r', size: evil, why: 'w',
-    gate: { line: evil }, rounds: [{ round: evil, audited: true, gate: evil, raised: evil, confirmed: 1, covered: 'c' }], specRounds: [],
+    gate: { line: evil }, rounds: [{ round: evil, audited: true, gate: evil, raised: evil, confirmed: 1, covered: evil }], specRounds: [],
     open: [blocker({ category: evil })] })
   assert.doesNotMatch(body, /@octocat|fixes #1/)
   const review = reviewComment({ verdict: 'pass', confidence: evil, missing: [evil], size: evil, lenses: [evil], covered: '', blockers: [], minors: [] })
   assert.doesNotMatch(review, /@octocat|fixes #1/)
+})
+
+test('the hand-back is found whether the bot is github-actions or github-actions[bot]', async () => {
+  const { answerSince, sameLogin } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  assert.ok(sameLogin('github-actions', 'github-actions[bot]'))
+  assert.ok(sameLogin('app/github-actions', 'github-actions[bot]'))
+  assert.ok(!sameLogin('eve', 'github-actions[bot]'))
+  const c = (login, body, createdAt) => ({ author: { login }, body, createdAt })
+  const comments = [c('github-actions', `404 or 410?\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`, '2026-10-01T10:30:00Z'), c('ana', 'use 410', '2026-10-01T11:00:00Z')]
+  assert.match((await answerSince(comments, SHIP_MARKER, async () => true, 'github-actions[bot]')).answer, /use 410/)
+})
+
+test('an error or a pull request after a hand-back never hides its answer', async () => {
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  const c = (login, body, createdAt) => ({ author: { login }, body, createdAt })
+  const handback = c('bot', `404 or 410?\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`, '2026-10-01T10:30:00Z')
+  const answer = c('ana', 'use 410', '2026-10-01T11:00:00Z')
+  const error = c('bot', `failed\n\n${SHIP_MARKER} outcome=error claimed=2026-10-01T12:00:00Z -->`, '2026-10-01T12:30:00Z')
+  const pr = c('bot', `ready\n\n${SHIP_MARKER} outcome=pr claimed=2026-10-01T13:00:00Z -->`, '2026-10-01T13:30:00Z')
+  for (const after of [[error], [pr], [error, pr]]) {
+    const r = await answerSince([handback, answer, ...after], SHIP_MARKER, async () => true, 'bot')
+    assert.match(r.answer, /The hand-back said:\n404 or 410\?[\s\S]*use 410/)
+    assert.doesNotMatch(r.answer, /failed|ready/)
+  }
+})
+
+test('the config refuses wrong types that would crash mid-run', () => {
+  assert.throws(() => config({ tests: { weakenedIfRemoved: 'assert' } }), /weakenedIfRemoved must be a regular expression/)
+  assert.throws(() => config({ tests: { isTest: true } }), /isTest must be a function/)
+  assert.throws(() => config({ lenses: { code: { key: 'p' }, spec: [] } }), /lenses.code must be a list/)
+  const once = () => { try { resolveConfig({ commands: { gate: './mvnw verify' } }) } catch (e) { return e.message } }
+  assert.equal(once().match(/commands.gate/g).length, 1)
 })
