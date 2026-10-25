@@ -79,7 +79,8 @@ export function reviseAsk(specPath, open, list) {
   return `Independent auditors confirmed these problems with ${specPath}:\n\n${list(open)}\n\n` +
     `Revise the spec to resolve each one at its cause — or, if the ticket itself is wrong, record that under ` +
     `*Decisions*. A technical question the ticket does not settle is yours to decide: decide it and record it ` +
-    `under *Decisions*. Fresh auditors will read the revised spec. Commit ("docs(spec): …"). Return decisions ` +
+    `under *Decisions*. These confirmed findings are reason enough to change the spec, on an earlier attempt's ` +
+    `branch too. Fresh auditors will read the revised spec. Commit ("docs(spec): …"). Return decisions ` +
     `as EVERY Decision now in the spec, old and new.`
 }
 

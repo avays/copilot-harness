@@ -147,8 +147,8 @@ export const where = (f) => `${f.file}|${f.line ? f.line : words(f.claim)}`
 // and the skeptic may refute the place only if every reading is wrong.
 // Keeping only the first let a refuted claim take a real one down with it.
 //
-// The loop routes on a finding's category (scope goes to a person, a misread
-// criterion is re-planned), so a merged finding leads with its weightiest
+// The loop routes on a finding's category (scope goes to a person at once),
+// so a merged finding leads with its weightiest
 // reading: a scope reading filed second must not hide behind a logic one.
 const WEIGHT = ['scope', 'criterion-unmet', 'rules', 'logic', 'test-proves-nothing', 'test-weakened', 'gate', 'conflict', 'spec-gap', 'docs-stale', 'other']
 const weight = (c) => { const i = WEIGHT.indexOf(c); return i < 0 ? WEIGHT.length : i }

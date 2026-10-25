@@ -273,7 +273,7 @@ test('a draft does not claim a skeptic refuted the red-check when it did not', a
 test('red rounds are not counted as audits in the pull request', async () => {
   const { shipPrBody } = await import('../lib/publish.mjs')
   const r = await run(fakeCtx(SHIP_ARGS, script()), { config: config(), deps: deps({ gates: [red(), green()] }) })
-  assert.match(shipPrBody(r), /independent audit: clean after 1 audit\b/)
+  assert.match(shipPrBody(r), /independent audit: clean after 1 spec audit and 1 code audit/)
 })
 
 test('learn that dies after committing still gets the gate re-run', async () => {
@@ -383,7 +383,7 @@ test('a finding that skips a round starts its streak again', async () => {
   const round = (label) => Number(/#(\d+)$/.exec(label)[1])
   const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:': (label) => ({ ...clean, findings: [round(label) % 2 ? a : b] }) }))
   // Six rounds, so that without the reset `a` would reach three in a row by round five.
-  const r = await run(ctx, { config: config({ tiers: { full: { buildRounds: 6 } } }), deps: deps() })
+  const r = await run(ctx, { config: config({ tiers: { full: { buildRounds: 6, specRounds: 6 } } }), deps: deps() })
   assert.match(r.reason, /still not clean after 6 rounds/)
 })
 
@@ -592,4 +592,34 @@ test('a ticket in question hands back from the spec audit at once', async () => 
   assert.equal(r.outcome, 'handback')
   assert.match(r.reason, /ticket itself is in question/)
   assert.ok(!ctx.calls.some((c) => c.label.startsWith('revise-spec')))
+})
+
+test('a spec blocker the skeptic refutes costs no revision; the spec skeptic runs on the spec slot', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'spec-audit:': { ...clean, findings: [blocker({ file: 'specs/7-x.md', line: 3 })] }, 'skeptic:spec': { refuted: true, why: 'the ticket says so' } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('revise-spec')))
+  assert.equal(ctx.calls.find((c) => c.label.startsWith('skeptic:spec')).opts.model, 'm-strong')
+  assert.equal(r.outcome, 'pr')
+})
+
+test('the reviser on a continuing run is told it is continuing, and that the findings justify changing the spec', async () => {
+  let n = 0
+  const ctx = fakeCtx({ ...SHIP_ARGS, continuing: true }, script({ 'spec-audit:': () => (++n === 1 ? { ...clean, findings: [blocker({ file: 'specs/7-x.md', line: 3 })] } : clean) }))
+  await run(ctx, { config: config(), deps: deps() })
+  const p = ctx.calls.find((c) => c.label === 'revise-spec#1').prompt
+  assert.match(p, /earlier attempt at this ticket/)
+  assert.match(p, /reason enough to change the spec/)
+})
+
+test('a spec reviser that dies hands back with what it was revising', async () => {
+  const gap = blocker({ file: 'specs/7-x.md', line: 3, claim: 'no empty case' })
+  const r = await run(fakeCtx(SHIP_ARGS, script({ 'spec-audit:': { ...clean, findings: [gap] }, 'revise-spec': undefined })), { config: config(), deps: deps() })
+  assert.match(r.reason, /spec reviser did not finish/)
+  assert.deepEqual(r.open.map((f) => f.claim), ['no empty case'])
+})
+
+test('a tier with no spec slot still gets the strong model for its spec', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script())
+  await run(ctx, { config: config({ tiers: { small: { spec: null } } }), deps: deps() })
+  assert.equal(ctx.calls.find((c) => c.label === 'spec-audit:combined#1').opts.model, 'm-strong')
 })

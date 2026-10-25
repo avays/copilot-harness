@@ -559,3 +559,10 @@ test('an agent that died of a quota says so in the hand-back', async () => {
   assert.match(r.reason, /^the setup agent did not finish — Copilot reported: quota_exceeded: You have exceeded your monthly quota/)
   assert.equal(explain({ outcome: 'pr' }, failures).reason, undefined)
 })
+
+test('the spec gets at least as many rounds as the build, by sizing and by validation', () => {
+  const api = profileFor({ ...smallFacts, changesApi: true }, config())
+  assert.ok(api.specRounds >= api.buildRounds, `${api.specRounds} < ${api.buildRounds}`)
+  assert.throws(() => config({ tiers: { small: { specRounds: 1 } } }), /specRounds must be a whole number of at least 2/)
+  assert.throws(() => config({ tiers: { full: { specRounds: 3, buildRounds: 4 } } }), /specRounds must be at least its buildRounds/)
+})

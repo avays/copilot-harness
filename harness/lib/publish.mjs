@@ -56,11 +56,12 @@ export function shipPrBody(r) {
     // Only audited rounds count as audit: a red gate or a conflict is the
     // machine's catch, not the auditors'.
     const audits = (r.rounds || []).filter((x) => x.audited)
-    const fixed = [...audits, ...(r.specRounds || [])].reduce((n, x) => n + (x.confirmed || 0), 0)
+    const specs = (r.specRounds || []).length
+    const fixed = [...audits, ...(r.specRounds || [])].reduce((n, x) => n + (Number(x.confirmed) || 0), 0)
     s.push(`## Checks\n\n` + [
       `Gate green: ${tame(r.gate.line)}`,
       r.redCheck && r.redCheck.failedOnBase ? 'the new tests fail without the change' : null,
-      `independent audit: ${fixed ? `${fixed} problem${fixed === 1 ? '' : 's'} found and fixed, ` : ''}clean after ${audits.length} audit${audits.length === 1 ? '' : 's'}`,
+      `independent audit: ${fixed ? `${fixed} problem${fixed === 1 ? '' : 's'} found and fixed, ` : ''}clean after ${specs} spec audit${specs === 1 ? '' : 's'} and ${audits.length} code audit${audits.length === 1 ? '' : 's'}`,
     ].filter(Boolean).map((x) => `- ${x}`).join('\n'))
   }
   if (r.open && r.open.length) s.push(`## Still open\n\n${list(r.open)}`)

@@ -142,6 +142,7 @@ export function resolveConfig(user = {}) {
   for (const [name, t] of Object.entries(c.tiers)) {
     if (!Number.isInteger(t.buildRounds) || t.buildRounds < 2) problems.push(`tiers.${name}.buildRounds must be a whole number of at least 2`)
     if (!Number.isInteger(t.specRounds) || t.specRounds < 2) problems.push(`tiers.${name}.specRounds must be a whole number of at least 2`)
+    else if (Number.isInteger(t.buildRounds) && t.specRounds < t.buildRounds) problems.push(`tiers.${name}.specRounds must be at least its buildRounds: the spec decides what gets built`)
   }
   for (const k of ['source', 'tests', 'risky']) if (!Array.isArray(c.paths[k])) problems.push(`paths.${k} must be a list of path prefixes`)
   for (const [name, t] of Object.entries(c.tiers)) {

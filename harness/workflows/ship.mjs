@@ -12,7 +12,7 @@
 // after. The returned object is everything publishing needs.
 import { modelFor } from '../lib/config.mjs'
 import {
-  brief, dedupe, DONE, FINDINGS, findingsOf, key, LESSON, listFindings, REFUTATION, setupSchema, SPEC_WRITTEN, where,
+  brief, dedupe, DONE, FINDINGS, findingsOf, key, LESSON, listFindings, REFUTATION, setupSchema, SPEC_WRITTEN,
 } from '../lib/findings.mjs'
 import { gate as runGate, gateFindings, gateLine } from '../lib/gate.mjs'
 import { facts as diffFacts, syncBase } from '../lib/git.mjs'
@@ -152,7 +152,8 @@ export async function run(ctx, { config, deps = realDeps }) {
     const judged = await ctx.parallel(dedupe(findings).map((f, i) => () =>
       ctx.agent(
         `${COMMON}\n\n${ticket}\n\n${P.skepticAsk({ f, where: what, base: BASE, specPath: spec.path, list: listFindings })}`,
-        { label: `skeptic:${what === 'the spec' ? 'spec' : 'code'}:${i}#${round}`, schema: REFUTATION, model: m(T.think) },
+        // The spec loop's skeptic runs on the spec slot, like the rest of that loop.
+        { label: `skeptic:${what === 'the spec' ? 'spec' : 'code'}:${i}#${round}`, schema: REFUTATION, model: m(what === 'the spec' ? specSlot() : T.think) },
       // A skeptic that died refuted nothing: dropping its finding would let
       // a crash read as a clean audit.
       ).then((v) => (v && v.refuted ? null : f))))
@@ -163,6 +164,9 @@ export async function run(ctx, { config, deps = realDeps }) {
   // person at once; the same finding confirmed more than STUCK_AFTER rounds
   // running is stuck; and a loop that reaches its round limit hands back
   // with everything still open. `streaks()` keeps one loop's count.
+  // A tier that names no spec slot still gets the strong model for its spec.
+  const specSlot = () => T.spec || 'strong'
+
   function streaks() {
     const streak = new Map()
     // Once per key per round: several findings in one ten-line window share a key.
@@ -197,7 +201,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     ctx.phase('Spec Audit')
     const res = await audit(specLenses, (l, retry) => ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.continuingAudit(a)}${P.specAuditAsk({ lensAsk: l.ask, specPath: spec.path })}`,
-      { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.spec) },
+      { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || specSlot()) },
     ))
     if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`)
     const found = res.reports.flatMap(findingsOf)
@@ -210,7 +214,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     if (stop) return stop
     const revised = await ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.reviseAsk(spec.path, open, listFindings)}`,
-      { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(T.spec) },
+      { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(specSlot()) },
     )
     if (!revised) return handBack('Spec Audit', 'the spec reviser did not finish', open)
     // The revision's decisions are the ones the reviewer must answer.

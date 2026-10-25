@@ -24,6 +24,8 @@ export function profileFor(facts, config, { labelledFull = false } = {}) {
   if (broad.length) {
     p.codeLenses = [...new Set([...p.codeLenses.filter((k) => k !== 'combined'), 'criteria', 'rules'])]
     p.buildRounds = Math.max(p.buildRounds, 3)
+    // The spec gets at least as many rounds as the build.
+    p.specRounds = Math.max(p.specRounds, p.buildRounds)
     added.push(`${broad.join(', ')} → criteria and rules auditors`)
   }
   if (facts.openQuestions >= 2) {
