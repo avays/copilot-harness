@@ -47,7 +47,8 @@ export function diffFacts(numstat, config) {
   const files = [], risky = []
   for (const line of numstat.split('\n').filter(Boolean)) {
     const [add, del, ...rest] = line.split('\t')
-    const file = rest.join('\t').replace(/^.*\{.* => (.*)\}.*$/, '$1').replace(/^.* => /, '')
+    // A rename prints as prefix/{old => new}/suffix, or old => new.
+    const file = rest.join('\t').replace(/\{([^{}]*) => ([^{}]*)\}/, '$2').replace(/^.* => /, '').replace(/\/{2,}/g, '/')
     files.push(file)
     if (under(file, config.paths.risky)) risky.push(file)
     if (under(file, config.paths.source)) appLines += (Number(add) || 0) + (Number(del) || 0)
@@ -68,9 +69,11 @@ export async function facts(base, cwd, config) {
 export function tamperedFrom(patch, config) {
   const out = []
   let file = ''
+  let from = ''
   for (const line of patch.split('\n')) {
-    if (line.startsWith('+++ ')) { file = line.slice(6); continue }
-    if (line.startsWith('--- ')) continue
+    // A deleted file's new side is /dev/null: it is still that test file.
+    if (line.startsWith('--- ')) { from = line.slice(6); continue }
+    if (line.startsWith('+++ ')) { file = line === '+++ /dev/null' ? from : line.slice(6); continue }
     if (!file || !under(file, config.paths.tests)) continue
     if (line.startsWith('-') && config.tests.weakenedIfRemoved.test(line)) out.push(`${file}: removed ${line.slice(1).trim()}`)
     if (line.startsWith('+') && config.tests.weakenedIfAdded.test(line)) out.push(`${file}: added ${line.slice(1).trim()}`)

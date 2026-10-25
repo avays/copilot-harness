@@ -113,10 +113,14 @@ jobs:
       # nothing they read, cannot read their environment, and cannot sudo;
       # `runner` keeps only the right to run commands as that user. The step
       # fails closed if any of that does not hold.
-      # ADAPT: install whatever the gate needs above this step. Docker stays
-      # off: the docker group is root by another name (harness/ADAPTING.md §9).
-      # ADAPT: a private Maven repository's variables go in the Build step's
-      # env and in its --preserve-env list.
+      # ADAPT (harness/ADAPTING.md §2): install whatever the gate needs above
+      # this step; files the setup actions leave in the runner's home must be
+      # copied to the agent's, as settings.xml is below; variables must be in
+      # the build command's --preserve-env list. Docker stays off: access to
+      # it is root by another name. If the gate needs it (Testcontainers),
+      # delete the systemctl/chmod lines, add `sudo usermod -aG docker "$A"`
+      # before sudoers is rewritten, and delete the Docker check — and read
+      # §9 first: the boundary inside this job is then gone.
       - name: Isolate the agents
         run: |
           set -euo pipefail
@@ -129,12 +133,22 @@ jobs:
           sudo chown -R root:root /srv/harness/root
           sudo chmod -R a+rX,go-w /srv/harness/root
           sudo chown -R "$A:$A" /srv/harness/root/.harness
-          if [ -f "$HOME/.m2/settings.xml" ]; then sudo install -D -o "$A" -g "$A" -m 600 "$HOME/.m2/settings.xml" "/home/$A/.m2/settings.xml"; fi
-          sudo -u "$A" git config --global user.name "harness[bot]"
-          sudo -u "$A" git config --global user.email "harness@users.noreply.github.com"
-          sudo -u "$A" git config --global --add safe.directory '*'
+          # Maven's settings and toolchains, as setup-java wrote them for runner.
+          sudo install -d -o "$A" -g "$A" -m 700 "/home/$A/.m2"
+          for f in settings.xml toolchains.xml; do
+            if [ -f "$HOME/.m2/$f" ]; then sudo install -o "$A" -g "$A" -m 600 "$HOME/.m2/$f" "/home/$A/.m2/$f"; fi
+          done
+          sudo -u "$A" git -C "/home/$A" config --global user.name "harness[bot]"
+          sudo -u "$A" git -C "/home/$A" config --global user.email "harness@users.noreply.github.com"
+          sudo -u "$A" git -C "/home/$A" config --global --add safe.directory '*'
+          # The runner's home — its temp files, logs and checkout — is not the
+          # agents' to read.
+          chmod 700 "$HOME"
           sudo systemctl stop docker.socket docker containerd >/dev/null 2>&1 || true
           sudo chmod 000 /var/run/docker.sock 2>/dev/null || true
+          # Nothing scheduled may start agent code again after the kill below.
+          echo "$A" | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
+          sudo systemctl stop cron atd >/dev/null 2>&1 || true
           for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
           # From here on: runner may act as harness-agent, and as nobody else.
           sudo sh -c "rm -f /etc/sudoers.d/*; echo '$USER ALL=($A) NOPASSWD:SETENV: ALL' > /etc/sudoers.d/harness-agent; chmod 440 /etc/sudoers.d/harness-agent"
@@ -143,7 +157,7 @@ jobs:
           sudo -n -u "$A" true || { echo "::error::cannot run commands as $A"; exit 1; }
           if sudo -n -u "$A" sudo -n true 2>/dev/null; then echo "::error::$A can sudo"; exit 1; fi
           if sudo -n -u "$A" docker info >/dev/null 2>&1; then echo "::error::$A can reach Docker"; exit 1; fi
-          if sudo -n -u "$A" test -w "$GITHUB_WORKSPACE/.git/config"; then echo "::error::$A can write the runner's checkout"; exit 1; fi
+          if sudo -n -u "$A" test -r "$RUNNER_TEMP" || sudo -n -u "$A" test -x "$HOME"; then echo "::error::$A can reach the runner's home"; exit 1; fi
 
       # As harness-agent, from the read-only copy of the trusted checkout. Then
       # every process of that user is killed at once (kill -1), before the
@@ -163,11 +177,24 @@ jobs:
         if: always()
         run: sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
 
+      # The uploads run as runner. Reading the agents' folder directly, they
+      # would follow a link the agents left (to /proc/self/environ, say) and
+      # upload whatever it points to. So: regular files only, links never
+      # followed, copied into runner's own folder once every agent process is
+      # dead; the uploads read the copy.
+      - name: Collect the agents' outputs
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/harness-out"
+          rm -rf "$out"; mkdir -p "$out"
+          cd /srv/harness/root/.harness 2>/dev/null || exit 0
+          find -P handoff runs -type f \( -name 'review-*.build.json' -o -path 'runs/*' \) -exec cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: review-handoff-build
-          path: /srv/harness/root/.harness/handoff/review-*.build.json
+          path: ${{ runner.temp }}/harness-out/handoff/review-*.build.json
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore
@@ -175,7 +202,7 @@ jobs:
         if: always()
         with:
           name: harness-review-runs
-          path: /srv/harness/root/.harness/runs/
+          path: ${{ runner.temp }}/harness-out/runs/
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore

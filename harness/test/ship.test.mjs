@@ -553,3 +553,13 @@ test('a spec hand-back lists the gaps already carried', async () => {
   assert.equal(r.outcome, 'handback')
   assert.ok(r.alsoOpen.some((f) => f.claim === 'no empty case'))
 })
+
+test('a run that continues an earlier attempt is told to build on it', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, continuing: true, notes: 'Answer to the last hand-back: use 404' }, script())
+  await run(ctx, { config: config(), deps: deps() })
+  for (const l of ['setup', 'implement']) assert.match(ctx.calls.find((c) => c.label === l).prompt, /earlier attempt at this ticket[\s\S]*Do not start over/)
+  assert.match(ctx.calls[0].prompt, /use 404/)
+  const fresh = fakeCtx(SHIP_ARGS, script())
+  await run(fresh, { config: config(), deps: deps() })
+  assert.doesNotMatch(fresh.calls[0].prompt, /earlier attempt/)
+})

@@ -162,6 +162,9 @@ export default {
     // stripped; a refused request stops the extension loading. Leave empty
     // unless the gate cannot authenticate (ADAPTING §9).
     extensionEnv: [],
+    // The whole Copilot run, in minutes: several gates plus the agents' time.
+    // Keep it below the build job's timeout-minutes (120).
+    timeoutMinutes: 100,
     // Workflow ceilings ({ maxAiCredits, timeoutSeconds, maxTotalSubagents }).
     // Set one only from a cost you have measured: a guessed ceiling stops a
     // healthy run after it has already spent the credits.

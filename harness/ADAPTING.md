@@ -51,12 +51,27 @@ Then edit the three workflow files where they say `ADAPT`:
 - **The label names**, if you change them. They live in three places that must agree:
   `github.labels` in `harness.config.mjs`, the `if:` in `harness-ship.yml`, and the `gh label create`
   lines in `harness-setup.yml`.
-- **Anything else the gate needs on the runner,** installed in the build job *before* the step that turns
-  sudo off: system packages, a database, browsers.
+- **Anything else the gate needs,** set up before the *Isolate the agents* step, which takes sudo away.
+  The gate runs as the agents' user (§9), so three things don't carry over by themselves:
+  - **Tools** must be installed system-wide or in the tool cache (`/opt/hostedtoolcache`), not in the
+    runner's home.
+  - **Files the setup actions write to the runner's home** must be copied to `/home/harness-agent`.
+    *Isolate the agents* already copies `~/.m2/settings.xml` and `~/.m2/toolchains.xml`; add others,
+    such as browser caches, the same way.
+  - **Variables** the gate needs (a datasource URL, `MAVEN_OPTS`, `JAVA_HOME_8_X64`) must be listed in the
+    build command's `--preserve-env=`. `sudo` drops everything else.
+
+  A database started under `services:` runs in Docker, which that step stops. Install it as a system
+  package instead, or see the next point.
 - **Docker.** The build and review jobs switch Docker off before the agents start, because access to
-  Docker is root by another name. If the gate needs it (Testcontainers is common in Spring Boot), delete
-  the Docker lines in that step, and read §9 *Isolation* first: the boundary inside the job is then gone.
-  `./mvnw verify` passing on a laptop with Docker running proves nothing about this.
+  Docker is root by another name. If the gate needs it (Testcontainers is common in Spring Boot), make
+  three edits in *Isolate the agents*, in both workflows:
+  1. delete the `systemctl stop docker…` and `chmod 000 /var/run/docker.sock` lines;
+  2. add `sudo usermod -aG docker "$A"` before sudoers is rewritten;
+  3. delete the `docker info` check.
+
+  Read §9 *Isolation* first: with Docker, the agents' user can become root, so the boundary inside the
+  job is gone. `./mvnw verify` passing on a laptop with Docker running proves nothing about this.
 
 **Check:** `node harness/bin/doctor.mjs` runs. It will list what is still to do.
 
@@ -115,8 +130,9 @@ commands: {
 ```
 
 - **`gate`** is the definition of green. Every command must exit 0. Put everything a reviewer would ask
-  for here: tests, static checks, the formatter in check mode. It runs every round, so it has to fit
-  comfortably inside the job's `timeout-minutes` (120 by default) several times over.
+  for here: tests, static checks, the formatter in check mode. It runs every round, so several gates,
+  plus the agents' time, must fit inside `copilot.timeoutMinutes` (100 by default; keep it below the
+  build job's `timeout-minutes`, 120).
 - **Multi-module builds:** the report folders are searched one module level deep. For a migration where
   the Spring Boot app is a module of the legacy build, consider gating only that module
   (`./mvnw -B -ntp -pl app -am verify`) if the legacy modules are slow or need a server.
@@ -127,8 +143,11 @@ commands: {
   warning rather than a failure.
 - **Private Maven repositories:** the gate has to download dependencies, so the build job needs the
   repository's credential, and **the agents will be able to read it**. Use a **read-only package token**
-  that can do nothing but download artifacts. Wire it like this in `harness-ship.yml` (and in
-  `harness-review.yml` if reviewers build):
+  that can do nothing but download artifacts. `setup-java` writes `~/.m2/settings.xml` for the runner,
+  and *Isolate the agents* copies it into the agents' home, so `setup-java` must come before that step,
+  as it does. The variables it refers to must reach the agents' user too: add them to the build
+  command's `--preserve-env=` list. In `harness-ship.yml` (and in `harness-review.yml`, if reviewers
+  build):
 
   ```yaml
   - uses: actions/setup-java@v4
@@ -144,10 +163,12 @@ commands: {
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       MAVEN_USER: ${{ secrets.MAVEN_USER }}
       MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}
+    run: |
+      sudo -n -u harness-agent --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME,MAVEN_USER,MAVEN_TOKEN -- …
   ```
 
-  In a probe on CLI 1.0.103 such variables reached the extension (which runs the gate) without further
-  setup. Only if the gate can't authenticate, list the names in `copilot.extensionEnv` (§9).
+  `copilot.extensionEnv` doesn't apply here: it concerns what Copilot passes on to its extension, and the
+  variables have to reach Copilot first.
 
 ### `paths`
 
@@ -300,7 +321,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 115 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 122 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -308,8 +329,9 @@ behaviour you change.
 - **Copilot CLI loads the staged harness and runs a workflow headless**, with the command line,
   environment and staging `run.mjs` uses. `doctor --live` runs `harness-ping` and prints the credits it
   used (0 on CLI 1.0.103).
-- Staging (no folder trust carried over), the agents' environment, and the timeout that stops Copilot
-  and everything it started, by the same tests, live.
+- Staging (no folder trust carried over), the agents' environment, the timeout that stops Copilot and
+  everything it started, and the *Collect* step's copy (regular files only, links never followed), by
+  the same tests, live.
 
 **Checked by hand while building it:** the Copilot SDK's `defineWorkflow` accepts all three workflow
 definitions (`doctor --live` fails if registration does), and the workflow files pass
@@ -359,19 +381,23 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   or the gate of a later run. The staged home also keeps the run's own sessions, logs and settings, so a run
   leaves nothing in your `~/.copilot` (it used to switch experimental mode on there).
 - **In Actions, the agents run as a user of their own.** The build job creates an unprivileged
-  `harness-agent` user, copies the trusted checkout to `/srv/harness/root` (owned by root and read-only
-  to that user, except its `.harness/`, which holds the workspace and the run's outputs), and runs
-  `run.mjs`, and so Copilot and every agent, as `harness-agent`. Then it replaces sudo with one rule:
-  the job's own user may run commands as `harness-agent`, and nothing as root. The step fails closed if
-  root sudo, the agents' sudo, their Docker access or their write access to the job's checkout survives.
-  So the agents' code can't write anything a later step runs (the checkout's `.git/config`, the
-  downloaded actions, the step's command files), can't read those steps' environment or the runner's
-  memory, and can't become root. When the build ends, every process of that user is killed at once
-  (`kill -9 -1` as that user), and again in an `always()` step.
+  `harness-agent` user. It copies the trusted checkout to `/srv/harness/root`, owned by root and read-only
+  to that user, except its `.harness/`, which holds the workspace and the run's outputs. It runs
+  `run.mjs`, and so Copilot and every agent, as `harness-agent`. While it still has sudo, it closes the
+  runner's home to other users, stops Docker, and keeps cron and `at` from that user. Then it replaces
+  sudo with one rule: the job's own user may run commands as `harness-agent`, and nothing as root. The
+  step fails closed if root sudo, the agents' sudo, their Docker access, or their access to the runner's
+  home survives. So the agents' code can't write anything a later step runs (the checkout's
+  `.git/config`, the downloaded actions, the step's command files), can't read those steps' environment,
+  the runner's temp files or its memory, and can't become root. When the build ends, every process of
+  that user is killed at once (`kill -9 -1` as that user), and again in an `always()` step. Nothing they
+  scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
+  regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
+  can't make the upload read the runner's own environment. The uploads read that copy.
 - **No GitHub credential in the agents' reach.** The build job's read-only token is used only by the
-  checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Every
-  job's trusted checkout is pinned to the default branch, so a run started by hand from another branch
-  still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
+  checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Ship's
+  trusted checkouts are pinned to the default branch, and review's to the pull request's base. So a run
+  started by hand from another branch still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
   jobs that never run branch code. The work crosses to publish as a git bundle. Publish takes the issue,
   branch and title from the claim (never from the build), checks where it is pushing, never pushes a
   workflow file, and makes agent-written text in the PR body inert (no closing keywords, no

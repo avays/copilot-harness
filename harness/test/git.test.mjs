@@ -134,3 +134,43 @@ test('uncommitted changes are reported as such, not as a conflict with the base'
   writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 404; }\n')
   assert.deepEqual(await syncBase('origin/main', dir), { sync: 'dirty', conflicts: [] })
 })
+
+test('a renamed file keeps its directory, so it still counts and still escalates', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, 'src/main/db/old'), { recursive: true })
+  writeFileSync(join(dir, 'src/main/db/old/V1.sql'), 'create table a;\n')
+  g('add', '-A'); g('commit', '-qm', 'db'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  mkdirSync(join(dir, 'src/main/db/new'), { recursive: true })
+  g('mv', 'src/main/db/old/V1.sql', 'src/main/db/new/V1.sql')
+  writeFileSync(join(dir, 'src/main/db/new/V1.sql'), 'create table a;\ncreate table b;\n')
+  g('commit', '-qam', 'move')
+  const { facts } = await import('../lib/git.mjs')
+  const f = await facts('origin/main', dir, config({ paths: { source: ['src/main/'], tests: ['src/test/'], risky: ['src/main/db/'] } }))
+  assert.ok(f.appLines > 0)
+  assert.deepEqual(f.risky, ['src/main/db/new/V1.sql'])
+})
+
+test('deleting a whole test file is flagged as tampering', async () => {
+  const { dir, g } = repo()
+  writeFileSync(join(dir, 'src/test/FooTest.java'), 'class FooTest {\n  @Test void a() { assertEquals(1, 1); }\n}\n')
+  g('add', '-A'); g('commit', '-qm', 'test'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  g('rm', '-q', 'src/test/FooTest.java'); g('commit', '-qm', 'drop it')
+  const { tampered } = await import('../lib/git.mjs')
+  const t = await tampered('origin/main', dir, config({ paths: { source: ['src/main/'], tests: ['src/test/'], risky: [] } }))
+  assert.ok(t.some((l) => l.startsWith('src/test/FooTest.java: removed')), t.join('; '))
+})
+
+test('collecting the agents\' outputs copies regular files and never follows a link', () => {
+  const { dir } = repo()
+  const src = join(dir, 'agents'), out = join(dir, 'out')
+  mkdirSync(join(src, 'handoff'), { recursive: true }); mkdirSync(join(src, 'runs', 'r1'), { recursive: true }); mkdirSync(out)
+  writeFileSync(join(src, 'handoff', 'ship-7.build.json'), '{}')
+  writeFileSync(join(src, 'runs', 'r1', 'result.json'), '{}')
+  execFileSync('ln', ['-s', '/proc/self/environ', join(src, 'runs', 'r1', 'env')])
+  execFileSync('ln', ['-s', '/etc', join(src, 'runs', 'etc')])
+  execFileSync('ln', ['-s', '/proc/self/environ', join(src, 'handoff', 'ship-8.build.json')])
+  // The same command the workflow's "Collect the agents' outputs" step runs.
+  execFileSync('bash', ['-c', `cd "${src}" && find -P handoff runs -type f \\( -name 'ship-*.build.json' -o -name 'ship-*.bundle' -o -path 'runs/*' \\) -exec cp --no-dereference --parents -t "${out}/" {} +`])
+  const listed = execFileSync('find', [out, '-mindepth', '1'], { encoding: 'utf8' }).split('\n').filter(Boolean).map((p) => p.slice(out.length + 1)).sort()
+  assert.deepEqual(listed, ['handoff', 'handoff/ship-7.build.json', 'runs', 'runs/r1', 'runs/r1/result.json'])
+})

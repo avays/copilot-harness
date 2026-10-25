@@ -22,7 +22,7 @@ import { loadConfig } from '../lib/config.mjs'
 import { git } from '../lib/exec.mjs'
 import { facts } from '../lib/git.mjs'
 import * as GH from '../lib/github.mjs'
-import { REVIEW_MARKER, reviewComment, shipIssueComment, shipPrBody, shipTitle } from '../lib/publish.mjs'
+import { REVIEW_MARKER, reviewComment, SHIP_MARKER, shipIssueComment, shipPrBody, shipTitle } from '../lib/publish.mjs'
 import { reviewSize } from '../lib/sizing.mjs'
 import { slug } from '../workflows/ship.mjs'
 
@@ -294,7 +294,10 @@ async function shipPrepare(opt, root, config) {
     await GH.relabel(opt.n, { add: [L.working] }, root)
     await GH.relabel(opt.n, { remove: [L.ready, L.stuck, L.done] }, root)
   }
-  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes: opt.notes, size: opt.size }
+  // A person's answer to the last hand-back joins whatever --notes says.
+  const answer = GH.answerSince(t.comments, SHIP_MARKER)
+  const notes = [opt.notes, answer && `Answer to the last hand-back: ${answer}`].filter(Boolean).join('\n\n')
+  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes, size: opt.size }
   writeHandoff(root, opt, 'prepare', state)
   output({ skip: 'false', branch, ref: onRemote ? branch : base })
   return state
@@ -322,7 +325,7 @@ async function shipBuild(opt, root, config, state) {
   const dir = runDir(root, `ship-${opt.n}`)
   const t = state.issue
   const result = await runCopilot(root, config, 'harness-ship', {
-    issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir,
+    issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir, continuing: Boolean(onRemote),
     ...(state.notes ? { notes: state.notes } : {}), ...(state.size ? { size: state.size } : {}),
   }, dir, workdir)
   result.issue ??= opt.n

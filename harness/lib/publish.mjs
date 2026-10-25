@@ -7,11 +7,14 @@ import { brief } from './findings.mjs'
 // close an unrelated issue when the PR merges, and an @mention would page
 // someone. A zero-width joiner keeps it readable and stops GitHub reading it.
 const ZWJ = '\u200d'
-export const tame = (t) => String(t ?? '')
-  .replace(/\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s+)(?=[\w.-]*\/?[\w.-]*#\d)/gi, `$1${ZWJ}$2`)
-  .replace(/@(?=[\w-])/g, `@${ZWJ}`)
+// Code spans are left alone: GitHub links nothing inside them, and a path
+// or `@Test` there should stay copyable.
+const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s*)(?=(?:[\w.-]+\/[\w.-]+)?#\d|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/gi
+const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.`])@(?=[\w-])/g, `@${ZWJ}`)
+export const tame = (t) => String(t ?? '').split(/(`[^`]*`)/).map((part, i) => (i % 2 ? part : inert(part))).join('')
 
-const list = (fs) => fs.map((f) => `- **${f.category}** \`${tame(f.file)}${f.line ? ':' + f.line : ''}\` — ${tame(f.claim)}${f.fix ? `\n  *Fix:* ${tame(f.fix)}` : ''}`).join('\n')
+const code = (t) => `\`${String(t ?? '').replace(/`/g, "'")}\``
+const list = (fs) => fs.map((f) => `- **${f.category}** ${code(`${f.file}${f.line ? ':' + f.line : ''}`)} — ${tame(f.claim)}${f.fix ? `\n  *Fix:* ${tame(f.fix)}` : ''}`).join('\n')
 
 function auditTable(r) {
   const rows = [
@@ -63,18 +66,26 @@ export function shipPrBody(r) {
   if (r.lessons && r.lessons.length) s.push(`## Lessons recorded\n\n${r.lessons.map((l) => `- ${tame(l.pattern)} → ${tame(l.proposal)}`).join('\n')}`)
   const table = auditTable(r)
   if (table) s.push(`<details><summary>Every audit round</summary>\n\n${table}\n\n</details>`)
-  s.push(`<sub>Sized **${r.size || '?'}** — ${r.why || ''}.${spend(r.usage)} Built by the Copilot harness (harness/workflows/ship.mjs).</sub>`)
+  s.push(`<sub>Sized **${r.size || '?'}** — ${tame(r.why)}.${spend(r.usage)} Built by the Copilot harness (harness/workflows/ship.mjs).</sub>`)
   return s.join('\n\n')
 }
 
+// Marks the harness's own comments on an issue: the next run reads the
+// people's comments after the last one as their answer (run.mjs).
+export const SHIP_MARKER = '<!-- harness-ship -->'
+
 export function shipIssueComment(r, url) {
+  return shipIssueText(r, url) + `\n\n${SHIP_MARKER}`
+}
+
+function shipIssueText(r, url) {
   if (r.outcome === 'declined') return `The harness did not start this ticket: ${tame(r.reason)}\n\nEdit the ticket and label it again to retry.`
   if (r.outcome === 'error') return `The harness run failed before it finished: ${tame(r.reason)}\n\nThe job's log has the details. Label the ticket again to retry.`
   if (r.outcome === 'pr') return `Pull request ready for review: ${url}`
   return `Handed back to a person: **${tame(r.reason)}**${url ? ` — draft: ${url}` : ''}.` +
     (r.open && r.open.length ? `\n\nStill open:\n${list(r.open)}` : '') +
     (r.alsoOpen && r.alsoOpen.length ? `\n\nAlso unresolved:\n${list(r.alsoOpen)}` : '') +
-    `\n\nAnswer here or fix the ticket, then label it again to continue on the same branch.`
+    `\n\nAnswer in a comment here, or edit the ticket, then label it again: the next run reads both, and continues on the same branch.`
 }
 
 export const REVIEW_MARKER = '<!-- harness-review -->'

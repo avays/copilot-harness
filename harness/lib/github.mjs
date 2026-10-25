@@ -37,8 +37,22 @@ async function withBody(body, fn) {
 }
 
 export const issue = (n, cwd) =>
-  gh(`issue view ${Number(n)} --json number,title,body,labels,state`, { cwd, json: true })
-    .then((i) => ({ ...i, labels: (i.labels || []).map((l) => l.name) }))
+  gh(`issue view ${Number(n)} --json number,title,body,labels,state,comments`, { cwd, json: true })
+    .then((i) => ({ ...i, labels: (i.labels || []).map((l) => l.name), comments: i.comments || [] }))
+
+/**
+ * What people said after the harness last spoke on the issue: the answer to
+ * a hand-back. Only from people with write access, since it reaches the
+ * agents as part of their brief, and anyone can comment on a public repo.
+ */
+export function answerSince(comments, marker) {
+  let last = -1
+  comments.forEach((c, i) => { if (String(c.body || '').includes(marker)) last = i })
+  if (last < 0) return ''
+  return comments.slice(last + 1)
+    .filter((c) => ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(c.authorAssociation) && !String(c.body || '').includes(marker))
+    .map((c) => String(c.body || '').trim()).filter(Boolean).join('\n\n---\n\n').slice(0, 4000)
+}
 
 export const pr = (n, cwd) =>
   gh(`pr view ${Number(n)} --json number,title,body,baseRefName,headRefName,isDraft,isCrossRepository,labels,url,closingIssuesReferences`, { cwd, json: true })

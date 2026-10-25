@@ -46,6 +46,7 @@ export const meta = {
       workdir: { type: 'string' },
       notes: { type: 'string' },
       size: { type: 'string' },
+      continuing: { type: 'boolean' },
     },
   },
 }
@@ -82,7 +83,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     // On a pull request the skeptic refuted it; on a draft it may be the
     // very thing still open, so it must not claim a verdict nobody gave.
     ...(lastRed && lastRed.checked && !lastRed.failedOnBase
-      ? [shipped ? 'the new tests also pass without the change (judged a refactor by the skeptic)' : 'the new tests pass without the change']
+      ? [shipped ? 'the new tests also pass without the change (the skeptic refuted that as a defect)' : 'the new tests pass without the change']
       : []),
   ]
 
@@ -116,7 +117,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   const forced = a.size && config.tiers[a.size] ? a.size : null
   const writeSpecInSetup = (forced || 'small') === 'small' && !labelledFull
   const setup = await ctx.agent(
-    `${COMMON}\n\n${P.ticketText(a)}\n\n${P.setupAsk(config, a, writeSpecInSetup, specPath)}`,
+    `${COMMON}\n\n${P.ticketText(a)}\n\n${P.continuing(a, specPath)}${P.setupAsk(config, a, writeSpecInSetup, specPath)}`,
     // The one judgement every later phase is sized by: the strong model.
     { label: 'setup', schema: setupSchema(config), model: m('strong') },
   )
@@ -136,7 +137,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   // ── 2. Spec ────────────────────────────────────────────────────────────────
   ctx.phase('Spec')
   let spec = setup.spec && setup.spec.path ? setup.spec : await ctx.agent(
-    `${COMMON}\n\n${ticket}\n\n${P.specAsk(config, specPath)}`,
+    `${COMMON}\n\n${ticket}\n\n${P.continuing(a, specPath)}${P.specAsk(config, specPath)}`,
     { label: 'write-spec', schema: SPEC_WRITTEN, model: m(T.think) },
   )
   if (!spec) return handBack('Spec', 'the spec writer did not finish')
@@ -209,7 +210,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   // ── 4. Implement ───────────────────────────────────────────────────────────
   ctx.phase('Implement')
   const built = await ctx.agent(
-    `${COMMON}\n\n${ticket}\n\n${P.implementAsk(config, spec.path, carried, listFindings)}`,
+    `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.implementAsk(config, spec.path, carried, listFindings)}`,
     { label: 'implement', schema: DONE, model: m(T.build) },
   )
   if (!built || !built.ok) return handBack('Implement', built ? built.summary : 'the implementer did not finish')

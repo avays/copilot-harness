@@ -48,7 +48,8 @@ These are why each piece exists. Keep them when you change the harness.
 - **Every blocker faces a skeptic** before it costs a fix round. A false positive makes the fixer
   "fix" correct code. A skeptic that dies refutes nothing.
 - **Hand back rather than burn rounds.** The same finding surviving two fixes, or the round limit,
-  ends the run with a draft PR and the open findings.
+  ends the run with a draft PR and the open findings. A collaborator's answer in a comment, followed by
+  the label again, reaches the next run, which continues on the same branch.
 - **Sized by risk, not length.** Setup reports facts; one rule turns them into a loop. Small is the
   base, and a business rule, stored data or the harness itself buys the full loop. The diff can
   escalate a small run on evidence.
@@ -57,8 +58,8 @@ These are why each piece exists. Keep them when you change the harness.
 - **AI never holds the GitHub token.** In Actions, ship and review are three jobs each. Claiming and
   publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
   with no repository access, and the agents run there as a user of their own that can't sudo and
-  owns nothing the job's other steps use. Every job runs the default branch's harness, and the
-  branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
+  owns nothing the job's other steps use. Ship runs the default branch's harness and review the
+  pull request base's, and the branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
   pushed. On a laptop there is no such isolation (harness/ADAPTING.md §9).
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.

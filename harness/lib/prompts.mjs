@@ -24,6 +24,14 @@ export const ticketText = (a) =>
   `Ticket #${a.issue}: ${a.title}\n\n${a.body || '(no description)'}` +
   (a.notes ? `\n\nThe person who asked for this run wrote: "${a.notes}". Where it changes what to build, it amends the ticket; where it is about process, it is context.` : '')
 
+// A run on a branch an earlier attempt pushed: build on it, don't redo it.
+export const continuing = (a, specPath) => a.continuing
+  ? `This branch carries an earlier attempt at this ticket, which a person handed back (their answer, if any, is ` +
+    `in the notes above). Build on it: keep ${specPath} and change it only where the ticket or the answer ` +
+    `requires, recording why under *Decisions*; tests already committed may pass already, and that is fine. ` +
+    `Do not start over.\n\n`
+  : ''
+
 export const criteria = (doneWhen) => `Done when:\n${doneWhen.map((c) => `- ${c}`).join('\n')}`
 
 export function specAsk(config, path) {

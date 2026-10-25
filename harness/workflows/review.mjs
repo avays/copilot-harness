@@ -35,8 +35,10 @@ export const meta = {
 const LEVELS = ['low', 'medium', 'high']
 
 const LENSES = {
-  combined: (base) => P.CODE_LENSES.combined(base),
-  criteria: (base) => P.CODE_LENSES.criteria(base),
+  // "The spec" is the one the diff adds under the specs folder, if any; a
+  // pull request a person wrote usually has none.
+  combined: (base) => P.CODE_LENSES.combined(base).replace('then the spec', 'then the spec the diff adds, if any'),
+  criteria: (base) => P.CODE_LENSES.criteria(base).replace('then the spec', 'then the spec the diff adds, if any'),
   rules: (base) => P.CODE_LENSES.rules(base),
   tests: (base) => `Read the tests in \`git diff ${base}...HEAD\`. A blocker is a test that would pass ` +
     `without the change, asserts the implementation against itself, or an existing test weakened, disabled or ` +
