@@ -362,7 +362,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 169 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 172 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -439,7 +439,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   fails, and skips the copy below, if any survives. Nothing they scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
   regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
   can't make the upload read the runner's own environment. Then it masks literal occurrences of the Copilot token (and anything named in `HARNESS_MASK`) in every text file
-  of that copy, as the job log masks it. The uploads read that copy. *Isolate the agents* also takes group
+  of that copy (the job log also hides encoded forms; this replaces the literal token only). The uploads read that copy. *Isolate the agents* also takes group
   and world write off every folder on `PATH`, their contents and their parents — the hosted image ships
   `/usr/local/bin` and the tool cache under `/opt` world-writable — and fails if the agents' user can
   still write any of them, since the runner, and its later steps, run tools from there.

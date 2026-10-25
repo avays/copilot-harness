@@ -190,6 +190,10 @@ export function untrusted(text) {
 
 export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedir(), '.copilot')) {
   const stage = mkdtempSync(join(tmpdir(), 'harness-stage-'))
+  try { return fillStage(stage, root, own) } catch (e) { rmSync(stage, { recursive: true, force: true }); throw e }
+}
+
+function fillStage(stage, root, own) {
   cpSync(join(root, 'harness'), join(stage, 'harness'), { recursive: true })
   cpSync(join(root, 'harness.config.mjs'), join(stage, 'harness.config.mjs'))
   const home = join(stage, 'home')
@@ -201,7 +205,9 @@ export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedi
   // interactive Copilot would load the workspace's own project extension.
   if (existsSync(own)) {
     for (const entry of readdirSync(own)) {
-      if (entry === 'extensions' || RUN_STATE.test(entry)) continue
+      // Their extensions and plugins are theirs: Copilot loads both whatever
+      // the folder's trust, and the run should load only the harness.
+      if (['extensions', 'installed-plugins', 'plugins'].includes(entry) || RUN_STATE.test(entry)) continue
       if (TRUST_FILES.has(entry)) writeFileSync(join(home, entry), untrusted(readFileSync(join(own, entry), 'utf8')))
       // Windows refuses symlinks without admin rights or Developer Mode: copy.
       else { try { symlinkSync(join(own, entry), join(home, entry)) } catch { cpSync(join(own, entry), join(home, entry), { recursive: true }) } }
@@ -258,7 +264,11 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
       const { status, usage, failures } = readEvents(out)
       // Exit 0 is the only case where the result file is this run's; a
       // failed run leaves any earlier file untouched.
-      if (code === 0 && existsSync(resultFile)) return done(explain({ ...JSON.parse(readFileSync(resultFile, 'utf8')), usage }, failures))
+      if (code === 0 && existsSync(resultFile)) {
+        let parsed
+        try { parsed = JSON.parse(readFileSync(resultFile, 'utf8')) } catch (e) { return done({ outcome: 'error', usage, reason: `the workflow's result file is not JSON: ${e.message}` }) }
+        return done(explain({ ...parsed, usage }, failures))
+      }
       done(explain({ outcome: 'error', usage, reason: `copilot workflow run exited ${code}${status ? ` (${status})` : ''}` + (code === 2 ? ' — workflow not found or arguments invalid: is .github/extensions/harness/ in this checkout?' : '') }, failures))
     }
   })
@@ -402,12 +412,18 @@ async function shipBuild(opt, root, config, state) {
 }
 
 /** Issue references a merge would close, other than the ticket's own, in commit messages. */
-export function closingKeywords(log, own) {
+export function closingKeywords(log, own, repo = null) {
   const found = new Set()
   for (const m of String(log).matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*((?:[\w.-]+\/[\w.-]+)?#\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+)/gi)) {
-    // The ticket's own number, in any of its forms, is meant to close.
-    const n = (/#(\d+)$/.exec(m[1]) || /\/issues\/(\d+)$/.exec(m[1]) || [])[1]
-    if (Number(n) !== Number(own)) found.add(m[1])
+    // The ticket's own number is meant to close: as #N, or as this
+    // repository's owner/repo#N or issue URL — not another repository's.
+    const ref = m[1]
+    const bare = /^#(\d+)$/.exec(ref)
+    const slug = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(ref)
+    const url = /github\.com\/([\w.-]+\/[\w.-]+)\/(?:issues|pull)\/(\d+)$/.exec(ref)
+    const mine = (bare && Number(bare[1]) === Number(own)) ||
+      (repo && [slug, url].some((x) => x && x[1].toLowerCase() === repo.toLowerCase() && Number(x[2]) === Number(own)))
+    if (!mine) found.add(ref)
   }
   return [...found]
 }
@@ -470,7 +486,7 @@ async function shipPublish(opt, root, config, state, built) {
     // Agents write the commit messages, and those are not tamed: a merge would
     // honour a "fixes #123" in them. Rewriting the agents' commits is not
     // publish's job; saying so where the person merging will see it is.
-    result.closingCommits = closingKeywords(await must(['log', '--format=%B%x00', `origin/${base}..${ref}`], cwd, 'git log'), n)
+    result.closingCommits = closingKeywords(await must(['log', '--format=%B%x00', `origin/${base}..${ref}`], cwd, 'git log'), n, (await GH.repoEnv(root)).GH_REPO || process.env.GH_REPO || process.env.GITHUB_REPOSITORY)
     const body = shipPrBody(result)
     if (existing) {
       await GH.editPr(existing.number, body, root)
@@ -520,13 +536,19 @@ async function ship(opt, root, config) {
 }
 
 // ── review ───────────────────────────────────────────────────────────────────
+/** The issue a harness branch was made for: harness/<n>-<slug>. */
+export const issueFromBranch = (ref) => Number((/^harness\/(\d+)-/.exec(String(ref || '')) || [])[1]) || null
+
 async function reviewPrepare(opt, root, config) {
   const p = await GH.pr(opt.n, root)
   const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
   if (p.isDraft) return skip(`#${opt.n} is a draft — reviewed once it is marked ready`)
   // Its extension would run with this repository's Copilot token.
   if (p.isCrossRepository) return skip(`#${opt.n} comes from a fork — the harness does not run code from forks`)
-  const linked = (p.closingIssuesReferences || [])[0]
+  // GitHub links "Closes #N" only for a pull request into the default
+  // branch; a harness branch names its issue whatever the base is.
+  const fromBranch = issueFromBranch(p.headRefName)
+  const linked = fromBranch ? { number: fromBranch } : (p.closingIssuesReferences || [])[0]
   const t = linked ? await GH.issue(linked.number, root).catch(() => null) : null
   // An answer to a hand-back amends the ticket the change was built to.
   const { answer } = t ? await GH.answerSince(t.comments, SHIP_MARKER, (login, c) => GH.writer(login, c, root), await GH.whoami(root)) : { answer: '' }

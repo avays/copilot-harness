@@ -657,7 +657,7 @@ test('Copilot\'s errors explain only a hand-back caused by an agent dying', asyn
 
 test('the ticket\'s own number in any form is not flagged as a stray closing keyword', async () => {
   const { closingKeywords } = await import('../bin/run.mjs')
-  assert.deepEqual(closingKeywords('Fixes o/r#7\nCloses https://github.com/o/r/issues/7\nfixes #8', 7), ['#8'])
+  assert.deepEqual(closingKeywords('Fixes o/r#7\nCloses https://github.com/o/r/issues/7\nfixes #8', 7, 'o/r'), ['#8'])
 })
 
 test('sizing boundaries: exactly 3 areas is broad, exactly 300 lines does not escalate', () => {
@@ -670,4 +670,30 @@ test('sizing boundaries: exactly 3 areas is broad, exactly 300 lines does not es
 test('publish blames isolation only when isolation failed', async () => {
   const { missingBuild } = await import('../bin/run.mjs')
   assert.doesNotMatch(missingBuild({ BUILD_ISOLATED: 'skipped', BUILD_CLEAN: '' }), /survived|isolate/)
+})
+
+test('another repository\'s issue with the ticket\'s number is still flagged', async () => {
+  const { closingKeywords } = await import('../bin/run.mjs')
+  assert.deepEqual(closingKeywords('fixes other/repo#7\nfixes o/r#7\nfixes #7', 7, 'o/r'), ['other/repo#7'])
+})
+
+test('staging leaves the person\'s plugins out, and nothing behind when it fails', async () => {
+  const fs = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const own = fs.mkdtempSync(join(tmpdir(), 'own-'))
+  fs.mkdirSync(join(own, 'installed-plugins'))
+  const { home, cleanup } = stageHarness(resolve(import.meta.dirname, '../..'), own)
+  try { assert.ok(!fs.existsSync(join(home, 'installed-plugins'))) } finally { cleanup() }
+  const before = fs.readdirSync(tmpdir()).filter((n) => n.startsWith('harness-stage-')).length
+  const empty = fs.mkdtempSync(join(tmpdir(), 'no-harness-'))
+  assert.throws(() => stageHarness(empty, own))
+  assert.equal(fs.readdirSync(tmpdir()).filter((n) => n.startsWith('harness-stage-')).length, before)
+})
+
+test('a review finds its ticket from a harness branch, whatever the base', async () => {
+  const { issueFromBranch } = await import('../bin/run.mjs')
+  assert.equal(issueFromBranch('harness/42-return-404'), 42)
+  assert.equal(issueFromBranch('feature/42-x'), null)
+  assert.equal(issueFromBranch(undefined), null)
 })

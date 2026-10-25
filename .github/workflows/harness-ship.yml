@@ -208,8 +208,8 @@ jobs:
           # the agents' to write — a folder, a file in it, or a parent they could rename it out of.
           IFS=: read -ra dirs <<< "$PATH"
           for d in "${dirs[@]}"; do
-            [ -d "$d" ] || continue
-            r=$(readlink -f -- "$d")
+            # A folder not there yet could be made and filled by the agents: check where it would go.
+            r=$(readlink -m -- "$d"); while [ ! -e "$r" ] && [ "$r" != / ]; do r=$(dirname -- "$r"); done
             if [ -n "$(sudo -n -u "$A" find "$r" -maxdepth 1 -writable -print -quit 2>/dev/null)" ]; then echo "::error::$A can write in $r, which is on PATH"; exit 1; fi
             p=$r
             while [ "$p" != / ]; do

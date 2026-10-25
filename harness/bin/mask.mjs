@@ -23,6 +23,8 @@ export function mask(dir, secrets) {
       const p = Buffer.concat([d, Buffer.from('/'), e.name])
       if (e.isDirectory()) { walk(p); continue }
       if (!e.isFile()) continue
+      // A git bundle is compressed: a token in it is not text to replace.
+      if (e.name.toString().endsWith('.bundle')) continue
       try {
         const text = readFileSync(p, 'latin1')
         const masked = list.reduce((t, s) => t.split(s).join('***'), text)
