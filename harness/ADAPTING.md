@@ -391,7 +391,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   edits, hand-back answers) are unit-tested. §7 steps 6–8 cover the rest.
 - **The token's Copilot Requests permission.** `--live` makes no model call; the first ticket does.
 - **Structured output from the models you choose.** Copilot validates each agent's answer against the
-  schema and re-asks once. A model that keeps failing makes that agent return null, which the harness
+  schema and asks the same agent to correct it, up to twice. A model that keeps failing makes that agent return null, which the harness
   treats as "did not finish".
 - **Permission patterns.** Deny rules always beat allow rules (`copilot help permissions`), but shell
   rules match on the first subcommand, so a git alias might get round `shell(git push)`. The harness

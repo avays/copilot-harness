@@ -51,7 +51,7 @@ export const meta = {
   },
 }
 
-// The same finding confirmed this many rounds running means the fixer cannot
+// The same finding confirmed more than this many rounds running means the fixer cannot
 // fix it: hand back early instead of spending the remaining rounds.
 const STUCK_AFTER = 2
 

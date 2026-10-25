@@ -177,7 +177,7 @@ might go wrong, through a bad model or a prompt-injected ticket, and limits what
 | Where agents run | a separate unprivileged `harness-agent` user, in a job of its own | as you |
 | GitHub token | none in the agents' reach; claim and publish are separate jobs | removed from their environment, but your stored credentials are readable |
 | sudo, Docker | removed and verified before agents start (fails closed) | whatever you have |
-| The harness that runs | ship: the default branch's; review: the pull request base's; never the branch's | the checkout you run from |
+| The harness that runs | ship: the default branch's; review: the pull request base's harness code, never the branch's (GitHub still takes `harness-review.yml` itself from a same-repository PR, so a person's PR that edits it runs that edit; the harness never pushes one) | the checkout you run from |
 | Pushing | publish pushes a bundle; never a workflow file or a local action (`.github/actions/`, any `action.yml`) | `run.mjs` pushes; agents' git has no credential helper |
 | Agent text on GitHub | the build's report (PR body, comments) made inert: no closing keywords, no @mentions. Commit messages are the agents' own; closing keywords in them are flagged at the top of the PR | the same |
 
@@ -242,7 +242,7 @@ because everything is `.mjs` with no dependencies.
 | A private Maven repository | The build job needs its credential, and **the agents can read it** | Use a read-only package token; add it to the build step's env, `--preserve-env` and the artifact masking (ADAPTING §4) |
 | Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
-| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit: `git fetch origin && git merge origin/<base>` first (the base has usually moved since the harness last merged it; resolve and run the gate), then `git reset --soft origin/<base> && git commit -S` and `git push --force-with-lease`. Or the mergers are given a bypass for the rule |
+| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit: `git switch harness/<n>-<slug> && git fetch origin && git merge origin/<base>` first (the base has usually moved since the harness last merged it; resolve and run the gate), then `git reset --soft origin/<base> && git commit -S` and `git push --force-with-lease`. Or the mergers are given a bypass for the rule |
 | A commit message convention | Agents are told to follow the project's convention (with a Conventional Commits fallback such as `docs(spec): …` if it states none) | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
@@ -544,7 +544,7 @@ would go.
 | `harness/workflows/review.mjs` | The review loop |
 | `harness/workflows/ping.mjs` | A no-agent workflow that proves the wiring for free |
 | `harness/lib/prompts.mjs` | Every word an agent is told, ship's and review's, in one place |
-| `harness/lib/gate.mjs`, `red-check.mjs`, `git.mjs` | The commands that decide facts |
+| `harness/lib/gate.mjs`, `red-check.mjs`, `git.mjs`, `exec.mjs` | The commands that decide facts |
 | `harness/lib/sizing.mjs`, `findings.mjs` | Sizing rules; schemas and finding comparison |
 | `harness/lib/github.mjs`, `publish.mjs` | GitHub reads and writes; PR and comment bodies |
 | `harness/lib/config.mjs` | Defaults and validation |
