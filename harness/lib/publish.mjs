@@ -13,14 +13,16 @@ const ZWJ = '\u200d'
 const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s*)(?=(?:[\w.-]+\/[\w.-]+)?#\d|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/gi
 const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.`])@(?=[\w-])/g, `@${ZWJ}`)
 export const tame = (t) => inert(String(t ?? ''))
+// A count from the build's report, printed only as a number.
+const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : '?')
 
 const code = (t) => `\`${String(t ?? '').replace(/`/g, "'")}\``
-const list = (fs) => fs.map((f) => `- **${f.category}** ${code(`${f.file}${f.line ? ':' + f.line : ''}`)} — ${tame(f.claim)}${f.fix ? `\n  *Fix:* ${tame(f.fix)}` : ''}`).join('\n')
+const list = (fs) => fs.map((f) => `- **${tame(f.category)}** ${code(`${f.file}${f.line ? ':' + f.line : ''}`)} — ${tame(f.claim)}${f.fix ? `\n  *Fix:* ${tame(f.fix)}` : ''}`).join('\n')
 
 function auditTable(r) {
   const rows = [
-    ...(r.specRounds || []).map((s) => `| spec ${s.round} | — | ${s.raised} raised · ${s.confirmed} confirmed | ${(s.what || []).map((w) => tame(brief(w))).join('; ') || '—'} |`),
-    ...(r.rounds || []).map((b) => `| build ${b.round} | ${b.gate} | ${b.raised} raised · ${b.confirmed} confirmed | ${tame(b.covered) || '—'} |`),
+    ...(r.specRounds || []).map((s) => `| spec ${num(s.round)} | — | ${num(s.raised)} raised · ${num(s.confirmed)} confirmed | ${(s.what || []).map((w) => tame(brief(w))).join('; ') || '—'} |`),
+    ...(r.rounds || []).map((b) => `| build ${num(b.round)} | ${tame(b.gate)} | ${num(b.raised)} raised · ${num(b.confirmed)} confirmed | ${tame(b.covered) || '—'} |`),
   ]
   return rows.length ? `| Round | Gate | Audit | Covered |\n| --- | --- | --- | --- |\n${rows.join('\n')}` : ''
 }
@@ -39,7 +41,7 @@ export function shipPrBody(r) {
   const s = []
   s.push(r.outcome === 'pr'
     ? `Closes #${r.issue}.`
-    : `Part of #${r.issue}. **Handed back: ${tame(r.reason)}** (in ${r.phase}). This draft holds what was built; what is still open is listed below.`)
+    : `Part of #${r.issue}. **Handed back: ${tame(r.reason)}** (in ${tame(r.phase)}). This draft holds what was built; what is still open is listed below.`)
   if (r.spec) {
     s.push(`## Spec\n\n[\`${tame(r.spec.path)}\`](../blob/${r.branch}/${encodeURI(r.spec.path)}) — ${tame(r.spec.summary)}`)
     if (r.spec.decisions && r.spec.decisions.length) s.push(`**Decisions for the reviewer:**\n${r.spec.decisions.map((d) => `- [ ] ${tame(d)}`).join('\n')}`)
@@ -54,7 +56,7 @@ export function shipPrBody(r) {
     const audits = (r.rounds || []).filter((x) => x.audited)
     const fixed = [...audits, ...(r.specRounds || [])].reduce((n, x) => n + (x.confirmed || 0), 0)
     s.push(`## Checks\n\n` + [
-      `Gate green: ${r.gate.line}`,
+      `Gate green: ${tame(r.gate.line)}`,
       r.redCheck && r.redCheck.failedOnBase ? 'the new tests fail without the change' : null,
       `independent audit: ${fixed ? `${fixed} problem${fixed === 1 ? '' : 's'} found and fixed, ` : ''}clean after ${audits.length} audit${audits.length === 1 ? '' : 's'}`,
     ].filter(Boolean).map((x) => `- ${x}`).join('\n'))
@@ -67,7 +69,7 @@ export function shipPrBody(r) {
   if (r.lessons && r.lessons.length) s.push(`## Lessons recorded\n\n${r.lessons.map((l) => `- ${tame(l.pattern)} → ${tame(l.proposal)}`).join('\n')}`)
   const table = auditTable(r)
   if (table) s.push(`<details><summary>Every audit round</summary>\n\n${table}\n\n</details>`)
-  s.push(`<sub>Sized **${r.size || '?'}** — ${tame(r.why)}.${spend(r.usage)} Built by the Copilot harness (harness/workflows/ship.mjs).</sub>`)
+  s.push(`<sub>Sized **${tame(r.size || '?')}** — ${tame(r.why)}.${spend(r.usage)} Built by the Copilot harness (harness/workflows/ship.mjs).</sub>`)
   return s.join('\n\n')
 }
 
@@ -99,14 +101,14 @@ export function reviewComment(r) {
     ? `> [!CAUTION]\n> ### Harness review · ${r.blockers.length} blocker${r.blockers.length === 1 ? '' : 's'}`
     : r.confidence === 'low'
       ? `> [!WARNING]\n> ### Harness review · no blockers, **unproven** (low confidence)`
-      : `> [!NOTE]\n> ### Harness review · no blockers · ${r.confidence} confidence`
+      : `> [!NOTE]\n> ### Harness review · no blockers · ${tame(r.confidence)} confidence`
   return [
     head,
     `Judged: ${tame(r.covered) || '—'}`,
-    r.missing && r.missing.length ? `**Did not finish:** ${r.missing.join(', ')} — confidence is low because an unread lens is not a passed one.` : '',
+    r.missing && r.missing.length ? `**Did not finish:** ${tame(r.missing.join(', '))} — confidence is low because an unread lens is not a passed one.` : '',
     r.blockers.length ? `## Blockers\n\n${list(r.blockers)}` : '',
     r.minors.length ? `## Notes\n\n${list(r.minors)}` : '',
-    `<sub>Size ${r.size} · lenses ${r.lenses.join(', ')}.${spend(r.usage)} Advisory: it does not block a merge.</sub>`,
+    `<sub>Size ${tame(r.size)} · lenses ${tame((r.lenses || []).join(', '))}.${spend(r.usage)} Advisory: it does not block a merge.</sub>`,
     REVIEW_MARKER,
   ].filter(Boolean).join('\n\n')
 }

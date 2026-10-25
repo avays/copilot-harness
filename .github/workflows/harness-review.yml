@@ -176,8 +176,14 @@ jobs:
           exit $status
 
       - name: Stop everything the agents started
+        id: stop
         if: always()
-        run: sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
+        run: |
+          sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
+          sleep 1
+          # Collect relies on this: nothing of theirs may still be running.
+          if pgrep -u harness-agent >/dev/null; then echo "::error::processes of harness-agent survived"; exit 1; fi
+          echo "clean=true" >> "$GITHUB_OUTPUT"
 
       # The uploads run as runner. Reading the agents' folder directly, they
       # would follow a link the agents left (to /proc/self/environ, say) and
@@ -185,7 +191,7 @@ jobs:
       # followed, copied into runner's own folder once every agent process is
       # dead; the uploads read the copy.
       - name: Collect the agents' outputs
-        if: always()
+        if: always() && steps.stop.outputs.clean == 'true'
         run: |
           out="$RUNNER_TEMP/harness-out"
           rm -rf "$out"; mkdir -p "$out"

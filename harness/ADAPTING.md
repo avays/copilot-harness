@@ -324,7 +324,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 126 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 130 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -393,10 +393,11 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   home survives. So the agents' code can't write anything a later step runs (the checkout's
   `.git/config`, the downloaded actions, the step's command files), can't read those steps' environment,
   the runner's temp files or its memory, and can't become root. When the build ends, every process of
-  that user is killed at once (`kill -9 -1` as that user), and again in an `always()` step. Nothing they
-  scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
+  that user is killed at once (`kill -9 -1` as that user), and again in an `always()` step, which
+  fails, and skips the copy below, if any survives. Nothing they scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
   regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
-  can't make the upload read the runner's own environment. The uploads read that copy.
+  can't make the upload read the runner's own environment. The uploads read that copy, and the Copilot
+  token is masked in the run's saved output as it is in the log.
 - **No GitHub credential in the agents' reach.** The build job's read-only token is used only by the
   checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Ship's
   trusted checkouts are pinned to the default branch. Review's are pinned to the pull request's base, or
@@ -404,8 +405,8 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   hand from another branch still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
   jobs that never run branch code. The work crosses to publish as a git bundle. Publish takes the issue,
   branch and title from the claim (never from the build), checks where it is pushing, never pushes a
-  workflow file, and makes agent-written text in the PR body inert (no closing keywords, no
-  @mentions).
+  workflow file or a local action (`.github/actions/`), and makes every field of the build's report
+  that reaches GitHub inert (no closing keywords, no @mentions) or a plain number.
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
   spend Copilot credits (up to `copilot.timeoutMinutes`, and any `copilot.limits`); read anything the
   build job gives it (a read-only package token, if you add one); write commits a person will review;

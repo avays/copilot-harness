@@ -373,3 +373,49 @@ test('a hand-back that pushed nothing does not promise the same branch', () => {
   // Without its marker the next run could never find the hand-back.
   assert.match(shipIssueComment(back, '', '2026-10-01T10:00:00Z'), /<!-- harness-ship claimed=2026-10-01T10:00:00Z -->$/)
 })
+
+test('a process that left the group and holds Copilot\'s output cannot stall the run', async () => {
+  const { runCopilot } = await import('../bin/run.mjs')
+  const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(join(tmpdir(), 'harness-hang-'))
+  const bin = join(dir, 'fake-copilot')
+  // Leaves a detached sleeper holding stdout, then exits at once.
+  writeFileSync(bin, '#!/bin/bash\nsetsid sleep 60 &\nexit 0\n')
+  chmodSync(bin, 0o755)
+  const started = Date.now()
+  const r = await runCopilot(resolve(import.meta.dirname, '../..'), config({ copilot: { bin, timeoutMinutes: 5 } }), 'harness-ping', {}, dir, dir)
+  assert.ok(Date.now() - started < 15000, `took ${Date.now() - started}ms`)
+  assert.equal(r.outcome, 'error')
+})
+
+test('the Copilot token is masked in the run folder\'s copy of the output', async () => {
+  const { runCopilot } = await import('../bin/run.mjs')
+  const { mkdtempSync, writeFileSync, chmodSync, readFileSync } = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(join(tmpdir(), 'harness-mask-'))
+  const bin = join(dir, 'fake-copilot')
+  writeFileSync(bin, '#!/bin/bash\necho "{\\"type\\":\\"tool\\",\\"out\\":\\"COPILOT_GITHUB_TOKEN=$COPILOT_GITHUB_TOKEN\\"}"\n')
+  chmodSync(bin, 0o755)
+  const saved = process.env.COPILOT_GITHUB_TOKEN
+  process.env.COPILOT_GITHUB_TOKEN = 'github_pat_SECRET123'
+  try { await runCopilot(resolve(import.meta.dirname, '../..'), config({ copilot: { bin } }), 'harness-ping', {}, dir, dir) } finally {
+    if (saved === undefined) delete process.env.COPILOT_GITHUB_TOKEN; else process.env.COPILOT_GITHUB_TOKEN = saved
+  }
+  const text = readFileSync(join(dir, 'stdout.jsonl'), 'utf8')
+  assert.doesNotMatch(text, /SECRET123/)
+  assert.match(text, /\*\*\*/)
+})
+
+test('every field of the build\'s report that reaches GitHub is tamed or a number', async () => {
+  const { reviewComment } = await import('../lib/publish.mjs')
+  const evil = '@octocat fixes #1'
+  const body = shipPrBody({ outcome: 'handback', issue: 7, title: 't', branch: 'b', phase: evil, reason: 'r', size: evil, why: 'w',
+    gate: { line: evil }, rounds: [{ round: evil, audited: true, gate: evil, raised: evil, confirmed: 1, covered: 'c' }], specRounds: [],
+    open: [blocker({ category: evil })] })
+  assert.doesNotMatch(body, /@octocat|fixes #1/)
+  const review = reviewComment({ verdict: 'pass', confidence: evil, missing: [evil], size: evil, lenses: [evil], covered: '', blockers: [], minors: [] })
+  assert.doesNotMatch(review, /@octocat|fixes #1/)
+})

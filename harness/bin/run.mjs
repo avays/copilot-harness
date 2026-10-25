@@ -206,26 +206,34 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'inherit'],
     })
-    let out = '', timedOut = false
+    let out = '', timedOut = false, settled = false, exitCode = null
     const killGroup = () => { if (process.platform !== 'win32') { try { process.kill(-p.pid, 'SIGKILL') } catch {} } else { try { p.kill('SIGKILL') } catch {} } }
     // Below the job's own timeout, so the step still ends by itself and the
     // cleanup after it runs: a job that times out runs nothing else in the step.
-    const timer = setTimeout(() => { timedOut = true; killGroup() }, timeoutMinutes * 60_000)
+    // 'close' waits for every holder of Copilot's stdout, and a process that
+    // left the group could hold it for ever: on the timer, or a little after
+    // Copilot itself exits, stop waiting for it.
+    const finish = () => { if (!settled) { settled = true; p.stdout.destroy(); onClose(exitCode) } }
+    const timer = setTimeout(() => { timedOut = true; killGroup(); setTimeout(finish, 5000) }, timeoutMinutes * 60_000)
     p.stdout.on('data', (d) => { out += d; process.stderr.write(d) })
-    p.on('error', (e) => { clearTimeout(timer); stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
-    p.on('close', (code) => {
+    p.on('error', (e) => { clearTimeout(timer); settled = true; stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
+    p.on('exit', (code) => { exitCode = code; setTimeout(finish, 5000) })
+    p.on('close', (code) => { if (!settled) { settled = true; onClose(code) } })
+    function onClose(code) {
       clearTimeout(timer)
       killGroup()
       stage.cleanup()
-      // Kept on a timeout too: that is when someone will want to read it.
-      writeFileSync(join(dir, 'stdout.jsonl'), out)
+      // Kept on a timeout too: that is when someone will want to read it. The
+      // Copilot token is masked in the job log but not in an artifact.
+      const secret = process.env.COPILOT_GITHUB_TOKEN
+      writeFileSync(join(dir, 'stdout.jsonl'), secret ? out.split(secret).join('***') : out)
       if (timedOut) return done({ outcome: 'error', reason: `the run passed its timeout (${timeoutMinutes} minutes) and was stopped` })
       const { status, usage } = readEvents(out)
       // Exit 0 is the only case where the result file is this run's; a
       // failed run leaves any earlier file untouched.
       if (code === 0 && existsSync(resultFile)) return done({ ...JSON.parse(readFileSync(resultFile, 'utf8')), usage })
       done({ outcome: 'error', usage, reason: `copilot workflow run exited ${code}${status ? ` (${status})` : ''}` + (code === 2 ? ' — workflow not found or arguments invalid: is .github/extensions/harness/ in this checkout?' : '') })
-    })
+    }
   })
 }
 
@@ -264,12 +272,14 @@ async function worktreeFor(root, workdir, branch, onRemote, base) {
 }
 
 /**
- * Files under .github/workflows/ that a ref changes against the base. The
+ * Files under .github/workflows/ or .github/actions/ that a ref changes
+ * against the base: a pushed workflow runs on its branch with the
+ * repository's secrets, and so does a local action a workflow uses. The
  * pathspec does the filtering and -z turns off git's path quoting: filtered
  * by prefix, a quoted name (non-ASCII, a tab) would slip past.
  */
 export async function workflowEdits(baseRef, ref, cwd) {
-  return (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, '--', '.github/workflows/'], cwd, 'git diff'))
+  return (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, '--', '.github/workflows/', '.github/actions/'], cwd, 'git diff'))
     .split('\0').filter(Boolean)
 }
 
@@ -386,7 +396,7 @@ async function shipPublish(opt, root, config, state, built) {
   // secrets. Agent-written workflows are never pushed; a person applies them.
   const edits = ahead > 0 ? await workflowEdits(`origin/${base}`, ref, cwd) : []
   if (edits.length) {
-    Object.assign(result, { outcome: 'handback', phase: 'PR', reason: `the change edits ${edits.join(', ')}; the harness never pushes workflow files, so a person must apply it (the run's artifact holds the commits)` })
+    Object.assign(result, { outcome: 'handback', phase: 'PR', reason: `the change edits ${edits.join(', ')}; the harness never pushes workflow files or local actions, so a person must apply it (the run's artifact holds the commits)` })
     await GH.comment(n, shipIssueComment(result, '', state.claimed), root)
     await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
     return result

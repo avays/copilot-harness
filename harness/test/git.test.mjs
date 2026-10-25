@@ -176,3 +176,11 @@ test('collecting the agents\' outputs copies regular files and never follows a l
   const listed = execFileSync('find', [out, '-mindepth', '1'], { encoding: 'utf8' }).split('\n').filter(Boolean).map((p) => p.slice(out.length + 1)).sort()
   assert.deepEqual(listed, ['handoff', 'handoff/ship-7.build.json', 'runs', 'runs/r1', 'runs/r1/result.json'])
 })
+
+test('a local action the branch changes is refused like a workflow', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, '.github/actions/setup'), { recursive: true })
+  writeFileSync(join(dir, '.github/actions/setup/action.yml'), 'runs: { using: composite, steps: [] }\n')
+  g('add', '-A'); g('commit', '-qm', 'touch a local action')
+  assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir), ['.github/actions/setup/action.yml'])
+})
