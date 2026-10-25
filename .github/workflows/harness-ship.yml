@@ -1,0 +1,87 @@
+## Label an issue `ready-for-ai` and it becomes a verified pull request — or a
+## draft handed to a person, with everything still open written down.
+##
+## The job runs one command, harness/bin/run.mjs, which claims the ticket,
+## runs the `harness-ship` Copilot workflow headless, then pushes and opens the
+## pull request. The workflow is a script, not a prompt: its loops and round
+## limits are code (harness/workflows/ship.mjs).
+##
+## Needs: a COPILOT_GITHUB_TOKEN secret (fine-grained PAT, owned by a person,
+## with the "Copilot Requests" permission). ADAPTING.md §5 has the details.
+name: "Harness · ship"
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+      size:
+        description: "Force a size: full or small (blank: sized from the ticket)"
+        required: false
+        default: ""
+
+# One run per ticket. The claim swaps `ready-for-ai` for `ai-working`, which
+# fires `labeled` again; the job's `if` skips that one in seconds.
+concurrency:
+  group: harness-ship-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write # to start the review workflow once the pull request opens
+
+jobs:
+  ship:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ADAPT: the project's own toolchain. The gate in harness.config.mjs
+      # runs here, so this must match what the project builds with.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Pinned: dynamic workflows are in preview and change between releases.
+      - name: Install Copilot CLI
+        run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
+
+      - name: Commit as the harness
+        run: |
+          git config user.name "harness[bot]"
+          git config user.email "harness@users.noreply.github.com"
+
+      - name: Ship
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          # A PAT here lets the pull request trigger other workflows (CI) by
+          # itself; GITHUB_TOKEN works, and the review is started explicitly.
+          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          SIZE: ${{ inputs.size }}
+        run: node harness/bin/run.mjs ship "$ISSUE" ${SIZE:+--$SIZE}
+
+      - name: Keep the run folder
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-ship-${{ github.event.issue.number || inputs.issue }}
+          path: .harness/runs/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore

@@ -1,0 +1,48 @@
+## Run once after adopting the harness, and again after changing its config:
+## creates the labels and proves the wiring end to end — Copilot loads the
+## extension and runs a workflow — without starting a single agent, so it
+## costs no AI credits.
+name: "Harness · setup"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ADAPT: keep these names in step with github.labels in harness.config.mjs.
+      - name: Create the labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create ready-for-ai    --force --color 0E8A16 --description "Ship this with the harness"
+          gh label create ai-working      --force --color FBCA04 --description "The harness is working on this"
+          gh label create ready-for-human --force --color 1D76DB --description "The harness finished; a person reviews"
+          gh label create needs-human     --force --color D93F0B --description "The harness handed this back"
+          gh label create ship:full       --force --color 5319E7 --description "Give this ticket the full loop"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Copilot CLI
+        run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
+
+      - name: Doctor
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
+            echo "::error::No COPILOT_GITHUB_TOKEN secret — see ADAPTING.md §5"
+            node harness/bin/doctor.mjs
+            exit 1
+          fi
+          node harness/bin/doctor.mjs --live | tee -a "$GITHUB_STEP_SUMMARY"

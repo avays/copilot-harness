@@ -1,0 +1,73 @@
+## Review a pull request against its ticket and the project's instructions.
+## Independent lenses, a skeptic on every blocker, one comment with a verdict
+## and a confidence. Advisory: it never fails the check, so it never blocks a
+## merge — machines gate, agents advise.
+##
+## Security: the Copilot extension that runs is the one on the checked-out
+## branch. That is why pull requests from forks are skipped — their code would
+## run with this repository's Copilot token.
+name: "Harness · review"
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+concurrency:
+  group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr) }}
+
+      # ADAPT: the project's toolchain, if reviewers should be able to build
+      # or run a single test to prove a claim. Remove if they only read.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Copilot CLI
+        run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
+
+      - name: Review
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: node harness/bin/run.mjs review "$PR"
+
+      - name: Keep the run folder
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-review-${{ github.event.pull_request.number || inputs.pr }}
+          path: .harness/runs/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
