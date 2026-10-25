@@ -38,8 +38,10 @@ jobs:
       group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    # contents: write only for the permission lookup on hand-back answers;
+    # this job runs the base's code, never the pull request's.
     permissions:
-      contents: read
+      contents: write
       issues: read
       pull-requests: read
     outputs:
@@ -57,7 +59,9 @@ jobs:
       - name: Prepare
         id: prepare
         env:
-          GH_TOKEN: ${{ github.token }}
+          # The same identity ship publishes with, so both agree on which
+          # comments are the harness's own.
+          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
         # Also skips a dispatched review of a pull request from a fork.
         run: node harness/bin/run.mjs review "$PR" --phase prepare
       - uses: actions/upload-artifact@v4
@@ -124,6 +128,7 @@ jobs:
       # before sudoers is rewritten, and delete the Docker check — and read
       # §9 first: the boundary inside this job is then gone.
       - name: Isolate the agents
+        id: isolate
         run: |
           set -euo pipefail
           A=harness-agent
@@ -160,6 +165,9 @@ jobs:
           if sudo -n -u "$A" sudo -n true 2>/dev/null; then echo "::error::$A can sudo"; exit 1; fi
           if sudo -n -u "$A" docker info >/dev/null 2>&1; then echo "::error::$A can reach Docker"; exit 1; fi
           if sudo -n -u "$A" test -r "$RUNNER_TEMP" || sudo -n -u "$A" test -x "$HOME"; then echo "::error::$A can reach the runner's home"; exit 1; fi
+          # The runner's later steps run tools from PATH: none of its folders may be the agents' to write.
+          IFS=: read -ra dirs <<< "$PATH"
+          for d in "${dirs[@]}"; do if [ -d "$d" ] && sudo -n -u "$A" test -w "$d"; then echo "::error::$A can write $d, which is on PATH"; exit 1; fi; done
 
       # As harness-agent, from the read-only copy of the trusted checkout. Then
       # every process of that user is killed at once (kill -1), before the
@@ -192,11 +200,15 @@ jobs:
       # dead; the uploads read the copy.
       - name: Collect the agents' outputs
         if: always() && steps.stop.outputs.clean == 'true'
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           out="$RUNNER_TEMP/harness-out"
           rm -rf "$out"; mkdir -p "$out"
           cd /srv/harness/root/.harness 2>/dev/null || exit 0
-          find -P handoff runs -type f \( -name 'review-*.build.json' -o -path 'runs/*' \) -exec cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
+          /usr/bin/find -P handoff runs -type f \( -name 'review-*.build.json' -o -path 'runs/*' \) -exec /usr/bin/cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
+          # The job log masks secrets; an artifact does not.
+          node "$GITHUB_WORKSPACE/harness/bin/mask.mjs" "$out"
 
       - uses: actions/upload-artifact@v4
         if: always()

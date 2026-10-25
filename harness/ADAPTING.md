@@ -324,7 +324,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 134 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 136 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -396,8 +396,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   that user is killed at once (`kill -9 -1` as that user), and again in an `always()` step, which
   fails, and skips the copy below, if any survives. Nothing they scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
   regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
-  can't make the upload read the runner's own environment. The uploads read that copy, and the Copilot
-  token is masked in the run's saved output as it is in the log.
+  can't make the upload read the runner's own environment. Then it masks the Copilot token in every file
+  of that copy, as the job log masks it. The uploads read that copy. *Isolate the agents* also fails if
+  the agents' user can write any folder on `PATH`, since the runner's later steps run tools from there.
 - **No GitHub credential in the agents' reach.** The build job's read-only token is used only by the
   checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Ship's
   trusted checkouts are pinned to the default branch. Review's are pinned to the pull request's base, or
@@ -416,8 +417,10 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   user needs Docker access, and that is root: the boundary inside the job is then gone. Run that build
   in a container or VM of its own, or accept it for tickets from people you trust.
 - **Who can answer a hand-back.** The comments after the harness's hand-back reach the next run's agents
-  as part of their brief, so only people GitHub says can write to the repository are read. The others
-  are skipped, and the run's log names them.
+  as part of their brief, so only people GitHub says can write to the repository are read. Asking GitHub
+  that needs a token with push access, which is why the claim job (and review's prepare job) have
+  `contents: write`. Those jobs run only the default branch's code. If the answer can't be had, only the
+  repository's owner counts. The others are skipped, and the run's log names them.
 - **Who can start a run.** Anyone who can label an issue (triage access) can ship it, and its body is the
   agents' brief, so prompt injection arrives that way. Keep `ready-for-ai` to people who would review the
   result.

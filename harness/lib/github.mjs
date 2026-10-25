@@ -94,14 +94,15 @@ export async function answerSince(comments, marker, canWrite, harness = null) {
 }
 
 /**
- * Whether a person may write to the repository. The API's answer, when the
- * token can read it; otherwise the comment's author association, which
- * under-reports private organisation members (they show as CONTRIBUTOR).
+ * Whether a person may write to the repository: the API's answer, which
+ * needs a token with push access (the claim job has it). Without that
+ * answer, only the repository's owner counts: MEMBER and COLLABORATOR
+ * include people with read access only.
  */
 export async function writer(login, comment, cwd) {
   const r = await sh(`gh api repos/{owner}/{repo}/collaborators/${q(login)}/permission --jq .permission`, { cwd, env: await repoEnv(cwd) })
   if (r.code === 0) return ['admin', 'maintain', 'write'].includes(r.stdout.trim())
-  return ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(comment.authorAssociation)
+  return comment.authorAssociation === 'OWNER'
 }
 
 export const pr = (n, cwd) =>

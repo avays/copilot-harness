@@ -360,6 +360,13 @@ async function shipBuild(opt, root, config, state) {
   return result
 }
 
+/** Why publish has no build result, from what the build job reported. */
+export function missingBuild(env) {
+  if (env.BUILD_ISOLATED && env.BUILD_ISOLATED !== 'success') return 'the build job could not isolate the agents (its "Isolate the agents" step failed closed), so no agent ran — its log says which check'
+  if (env.BUILD_RESULT === 'success' && env.BUILD_CLEAN !== 'true') return 'agent processes survived the end of the build, so its outputs were not collected — its log names them'
+  return 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which'
+}
+
 async function shipPublish(opt, root, config, state, built) {
   const L = config.github.labels, n = opt.n, base = config.base
   // The hand-off came through artifacts the build job could have touched, so
@@ -371,7 +378,7 @@ async function shipPublish(opt, root, config, state, built) {
   if (built && built.bundle && built.bundle !== `ship-${n}.bundle`) throw new Error(`refusing an unexpected bundle name "${built.bundle}"`)
   // The build job timed out, was cancelled or lost its runner: say so, so
   // the ticket never sits claimed with nobody working on it.
-  const result = built && built.result ? built.result : { outcome: 'error', reason: 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which' }
+  const result = built && built.result ? built.result : { outcome: 'error', reason: missingBuild(process.env) }
   // The build result is the build job's account, and agents' code ran in
   // that job: which issue, branch and title this is comes from the claim.
   Object.assign(result, { issue: n, branch, title: state.issue && state.issue.title })

@@ -453,3 +453,24 @@ test('the config refuses wrong types that would crash mid-run', () => {
   const once = () => { try { resolveConfig({ commands: { gate: './mvnw verify' } }) } catch (e) { return e.message } }
   assert.equal(once().match(/commands.gate/g).length, 1)
 })
+
+test('mask removes the Copilot token from every collected file', async () => {
+  const { mask } = await import('../bin/mask.mjs')
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const d = mkdtempSync(join(tmpdir(), 'mask-'))
+  mkdirSync(join(d, 'runs', 'r'), { recursive: true })
+  writeFileSync(join(d, 'runs', 'r', 'result.json'), '{"out":"github_pat_S3CRET and github_pat_S3CRET"}')
+  writeFileSync(join(d, 'other.txt'), 'nothing here')
+  assert.equal(mask(d, 'github_pat_S3CRET'), 1)
+  assert.equal(readFileSync(join(d, 'runs', 'r', 'result.json'), 'utf8'), '{"out":"*** and ***"}')
+  assert.equal(mask(d, ''), 0)
+})
+
+test('publish says why there is no build result', async () => {
+  const { missingBuild } = await import('../bin/run.mjs')
+  assert.match(missingBuild({ BUILD_ISOLATED: 'failure' }), /could not isolate the agents/)
+  assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'success', BUILD_CLEAN: '' }), /survived the end of the build/)
+  assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'failure' }), /did not finish/)
+})
