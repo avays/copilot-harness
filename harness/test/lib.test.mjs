@@ -808,3 +808,13 @@ test('the gate is red when a report records a failing test, whatever the exit co
   assert.equal(g.ok, false)
   assert.equal(g.failedTests[0].test, 'A#b')
 })
+
+test('a passing test that prints error-like XML is not a failure', () => {
+  const xml = `<testsuite>
+  <testcase classname="OrderApiTest" name="retired"><system-out><![CDATA[<error code="RETIRED">gone</error>]]></system-out></testcase>
+  <testcase classname="T" name="b"><system-err>&lt;failure&gt;</system-err><error-detail/></testcase>
+  <testcase classname="T" name="c"><failure message="boom">trace</failure><system-out>x</system-out></testcase>
+  <testcase classname="T" name="d"><error type="NPE"/></testcase>
+</testsuite>`
+  assert.deepEqual(failedTestsIn(xml).map((f) => f.test), ['T#c', 'T#d'])
+})

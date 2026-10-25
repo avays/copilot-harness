@@ -23,7 +23,10 @@ function run(bin, args, { cwd, env, signal, timeoutMs }) {
     let stopped = false
     const stop = () => { stopped = true; p.kill('SIGTERM'); setTimeout(() => p.kill('SIGKILL'), 5000).unref() }
     const timer = timeoutMs ? setTimeout(stop, timeoutMs) : null
-    if (signal) signal.addEventListener('abort', () => { stopped = true }, { once: true })
+    const onAbort = () => { stopped = true }
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+    const done = () => { if (signal) signal.removeEventListener('abort', onAbort) }
+    p.on('close', done); p.on('error', done)
     p.on('exit', (code) => { if (stopped) { p.stdout.destroy(); p.stderr.destroy(); if (timer) clearTimeout(timer); resolveRun({ code: code ?? 1, stdout, stderr, out: out.join('') }) } })
     let stdout = '', stderr = ''
     // Decoded as a stream, so a character split across chunks stays whole.

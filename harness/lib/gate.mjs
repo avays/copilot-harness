@@ -14,8 +14,10 @@ import { dirty, head, tampered } from './git.mjs'
 export function failedTestsIn(xml) {
   const failed = []
   for (const m of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
-    const body = m[2] || ''
-    const f = /<(failure|error)\b([^>]*)>?([\s\S]*?)(?:<\/\1>|$)/.exec(body)
+    // What the test printed is not the verdict: a passing test may log
+    // `<error code=…>`, and Surefire writes system-out for passing tests too.
+    const body = (m[2] || '').replace(/<(system-out|system-err)\b[\s\S]*?(?:<\/\1>|$)/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+    const f = /<(failure|error)(?=[\s>\/])([^>]*)>?([\s\S]*?)(?:<\/\1>|$)/.exec(body)
     if (!f) continue
     const attr = (name) => (new RegExp(`\\b${name}="([^"]*)"`).exec(m[1]) || [])[1] || ''
     const message = (/\bmessage="([^"]*)"/.exec(f[2]) || [])[1] || ''
