@@ -879,3 +879,17 @@ test('text printed to the log cannot start a workflow command', async () => {
   assert.equal(oneLine('pass\n::error::x\r\n::add-mask::y'), 'pass ::error::x ::add-mask::y')
   assert.equal(oneLine(undefined), '')
 })
+
+test('suite-level output that looks like a failure is not one', () => {
+  const xml = '<testsuite><testcase classname="Q" name="ok"/><system-out><![CDATA[<testcase classname="Q" name="z"><failure message="m"/></testcase>]]></system-out></testsuite>'
+  assert.deepEqual(failedTestsIn(xml), [])
+})
+
+test('an abort during the drain does not mark a finished command stopped', async () => {
+  const { sh } = await import('../lib/exec.mjs')
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 500)
+  const r = await sh('sleep 4 & exit 0', { signal: ac.signal })
+  assert.equal(r.code, 0)
+  assert.equal(r.stopped, false)
+})

@@ -13,10 +13,12 @@ import { dirty, head, tampered } from './git.mjs'
  */
 export function failedTestsIn(xml) {
   const failed = []
+  // What the tests printed is not the verdict: a passing test may log
+  // `<error code=…>` or even JUnit XML, and Surefire writes system-out for
+  // passing tests, Gradle for whole suites. Dropped from the whole report.
+  xml = xml.replace(/<(system-out|system-err)\b(?:[^>]*\/>|[\s\S]*?(?:<\/\1>|$))/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
   for (const m of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
-    // What the test printed is not the verdict: a passing test may log
-    // `<error code=…>`, and Surefire writes system-out for passing tests too.
-    const body = (m[2] || '').replace(/<(system-out|system-err)\b(?:[^>]*\/>|[\s\S]*?(?:<\/\1>|$))/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+    const body = m[2] || ''
     const f = /<(failure|error)(?=[\s>\/])([^>]*)>?([\s\S]*?)(?:<\/\1>|$)/.exec(body)
     if (!f) continue
     const attr = (name) => (new RegExp(`\\b${name}="([^"]*)"`).exec(m[1]) || [])[1] || ''

@@ -30,7 +30,7 @@ function run(bin, args, { cwd, env, signal, timeoutMs }) {
     // not its output, and a JVM still writing to it gets EPIPE and dies.
     // An abort is handled the same way, not by spawn's own signal, which
     // settles at once and leaves the command running in its folder.
-    let stopped = false
+    let stopped = false, exitStopped = null
     function stop() {
       if (stopped) return
       stopped = true
@@ -50,12 +50,14 @@ function run(bin, args, { cwd, env, signal, timeoutMs }) {
     // background child left holding the pipes (a server it started) must
     // not hold the gate. Unstopped, a moment to drain what is still queued.
     p.on('exit', (code) => {
-      const end = () => { p.stdout.destroy(); p.stderr.destroy(); finish({ code: code ?? 1, stdout, stderr, out: out.join(''), stopped }) }
-      if (stopped) end()
+      // Stopped means stopped before it exited, not during the drain.
+      const wasStopped = exitStopped = stopped
+      const end = () => { p.stdout.destroy(); p.stderr.destroy(); finish({ code: code ?? 1, stdout, stderr, out: out.join(''), stopped: wasStopped }) }
+      if (wasStopped) end()
       else setTimeout(end, 2000).unref()
     })
     p.on('error', (e) => finish({ code: 127, stdout, stderr: stderr + String(e.message), out: out.join('') + String(e.message) }))
-    p.on('close', (code) => finish({ code: code ?? 1, stdout, stderr, out: out.join(''), stopped }))
+    p.on('close', (code) => finish({ code: code ?? 1, stdout, stderr, out: out.join(''), stopped: exitStopped ?? stopped }))
   })
 }
 
