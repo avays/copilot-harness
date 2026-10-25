@@ -22,7 +22,7 @@ import { loadConfig } from '../lib/config.mjs'
 import { git } from '../lib/exec.mjs'
 import { facts } from '../lib/git.mjs'
 import * as GH from '../lib/github.mjs'
-import { REVIEW_MARKER, reviewComment, SHIP_MARKER, shipIssueComment, shipPrBody, shipTitle } from '../lib/publish.mjs'
+import { REVIEW_MARKER, reviewComment, SHIP_MARKER, shipIssueComment, shipPrBody, shipTitle, tame } from '../lib/publish.mjs'
 import { reviewSize } from '../lib/sizing.mjs'
 import { slug } from '../workflows/ship.mjs'
 
@@ -430,7 +430,7 @@ async function shipBuild(opt, root, config, state) {
     await must(['bundle', 'create', join(harnessDir(root, 'handoff'), bundle), `refs/heads/${branch}`, `^origin/${base}`], workdir, 'git bundle create')
   }
   writeHandoff(root, opt, 'build', { result, workdir, bundle })
-  console.error(`harness: ${result.outcome}${result.reason ? ` — ${result.reason}` : ''} (run folder ${dir})`)
+  console.error(`harness: ${result.outcome}${result.reason ? ` — ${oneLine(result.reason)}` : ''} (run folder ${dir})`)
   if (!CI) console.error(`the worktree stays at ${workdir}; remove it with: git worktree remove ${workdir}`)
   return result
 }
@@ -618,13 +618,17 @@ async function reviewBuild(opt, root, config, state) {
   return result
 }
 
+// Agent text on one line: Actions reads a log line that starts with `::` as
+// a workflow command, so a newline in it could issue one.
+const oneLine = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ')
+
 async function reviewPublish(opt, root, config, built) {
   const result = built ? built.result : { outcome: 'error', reason: 'the review job did not finish' }
   const summary = (text) => process.env.GITHUB_STEP_SUMMARY && appendFileSync(process.env.GITHUB_STEP_SUMMARY, text + '\n')
   if (result.outcome === 'error' || result.outcome === 'skipped') {
     // Advisory: say so in the log and the summary, but never block.
-    console.error(`${CI ? '::warning::' : ''}harness review did not run to the end — ${result.reason}`)
-    summary(`Harness review did not run to the end: ${result.reason}`)
+    console.error(`${CI ? '::warning::' : ''}harness review did not run to the end — ${oneLine(result.reason)}`)
+    summary(`Harness review did not run to the end: ${tame(oneLine(result.reason))}`)
     return result
   }
   const body = reviewComment(result)
@@ -647,7 +651,7 @@ async function review(opt, root, config) {
     await reviewPublish(opt, root, config, readHandoff(root, opt, 'build'))
   } catch (e) {
     // Advisory: a review that could not run is a warning, never a red check.
-    console.error(`${CI ? '::warning::' : ''}harness review: ${e.message}`)
+    console.error(`${CI ? '::warning::' : ''}harness review: ${oneLine(e.message)}`)
   }
 }
 

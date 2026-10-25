@@ -270,7 +270,7 @@ jobs:
             git -C "$W" fetch -q "$b" "+refs/heads/*:refs/harness/scan/*"
             for v in COPILOT_GITHUB_TOKEN ${HARNESS_MASK//,/ }; do
               s="${!v:-}"; [ ${#s} -ge 4 ] || continue
-              if git -C "$W" log -p --text --diff-merges=first-parent --format=%B --glob=refs/harness/scan --not --remotes=origin | grep -qF -- "$s"; then
+              if git -C "$W" log -p --text --diff-merges=first-parent --format='%an %ae %cn %ce%n%B' --glob=refs/harness/scan --not --remotes=origin | grep -qF -- "$s"; then
                 echo "::error::the agents' commits contain $v; nothing is uploaded"; rm -f "$b"; exit 1
               fi
             done
