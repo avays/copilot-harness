@@ -27,12 +27,12 @@ const uniqueLabels = (ctx) => {
   assert.equal(new Set(labels).size, labels.length, `duplicate labels: ${labels.join(', ')}`)
 }
 
-test('a small ticket: setup writes the spec, one clean audit, a pull request', async () => {
+test('a small ticket: setup writes the spec, one clean spec audit, one clean code audit, a pull request', async () => {
   const ctx = fakeCtx(SHIP_ARGS, script())
   const r = await run(ctx, { config: config(), deps: deps() })
   assert.equal(r.outcome, 'pr')
   assert.equal(r.size, 'small')
-  assert.deepEqual(ctx.calls.map((c) => c.label), ['setup', 'implement', 'audit:combined#1'])
+  assert.deepEqual(ctx.calls.map((c) => c.label), ['setup', 'spec-audit:combined#1', 'implement', 'audit:combined#1'])
   assert.equal(r.rounds.length, 1)
   assert.equal(r.redCheck.failedOnBase, true)
   assert.deepEqual(r.notVerified, [])
@@ -153,14 +153,6 @@ test('a business rule buys the full loop: its own spec writer and two spec audit
   assert.equal(ctx.calls.find((c) => c.label === 'implement').opts.model, 'm-strong')
 })
 
-test('a spec gap is carried to the builder, not re-planned', async () => {
-  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no test named for the empty case' })
-  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [gap] } }))
-  await run(ctx, { config: config(), deps: deps() })
-  assert.ok(!ctx.calls.some((c) => c.label.startsWith('revise-spec')))
-  assert.match(ctx.calls.find((c) => c.label === 'implement').prompt, /no test named for the empty case/)
-})
-
 test('a misread criterion is re-planned before anything is built', async () => {
   let n = 0
   const miss = blocker({ category: 'criterion-unmet', file: 'specs/7-x.md', line: 3, claim: 'the spec returns 410, the ticket says 404' })
@@ -237,14 +229,6 @@ test('a ticket in question after the last spec round hands back, keeping the tec
   assert.deepEqual(r.open.map((f) => f.category), ['scope'])
   assert.deepEqual(r.alsoOpen.map((f) => f.category), ['logic'])
   assert.ok(!ctx.calls.some((c) => c.label === 'implement'))
-})
-
-test('a re-plan still open after the last spec round is carried into the build', async () => {
-  const miss = blocker({ category: 'logic', file: 'specs/7-x.md', line: 20, claim: 'the plan never maps the retired state' })
-  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [miss] } }))
-  await run(ctx, { config: config(), deps: deps() })
-  assert.equal(ctx.calls.filter((c) => c.label.startsWith('revise-spec')).length, 3)
-  assert.match(ctx.calls.find((c) => c.label === 'implement').prompt, /the plan never maps the retired state/)
 })
 
 test('the revised spec\'s decisions are the ones the pull request asks about', async () => {
@@ -379,15 +363,6 @@ test('a scope reading merged under a logic one at the same place still hands bac
   assert.match(r.reason, /ticket itself is in question/)
 })
 
-test('a spec blocker at a place already carried is not judged again', async () => {
-  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no test named for the empty case' })
-  const miss = blocker({ category: 'criterion-unmet', file: 'specs/7-x.md', line: 30, claim: 'wrong status' })
-  let n = 0
-  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [gap, miss] } : { ...clean, findings: [gap] }) }))
-  await run(ctx, { config: config(), deps: deps() })
-  assert.equal(ctx.calls.filter((c) => c.label.startsWith('skeptic:spec')).length, 2)
-})
-
 test('a heavy-area ticket is not asked to write a spec in setup', async () => {
   const ctx = fakeCtx(SHIP_ARGS, script())
   await run(ctx, { config: config({ sizing: { areas: { web: 'w', persistence: 'p', harness: 'h' }, heavyAreas: ['harness', 'persistence'] } }), deps: deps() })
@@ -442,17 +417,6 @@ test('an escalated run says why in its sizing line', async () => {
   assert.match(r.why, /escalated on its diff: the diff touches pom.xml/)
 })
 
-test('a new blocker on the line of a carried gap is still judged', async () => {
-  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no empty case' })
-  const replan = blocker({ category: 'logic', file: 'specs/7-x.md', line: 30, claim: 'wrong status' })
-  const logic = blocker({ category: 'logic', file: 'specs/7-x.md', line: 12, claim: 'the plan maps retired to 200' })
-  let n = 0
-  // Round 1 carries the gap and re-plans; round 2 raises a new problem on the gap's line.
-  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [gap, replan] } : { ...clean, findings: [gap, logic] }) }))
-  await run(ctx, { config: config(), deps: deps() })
-  assert.ok(ctx.calls.some((c) => c.label.startsWith('skeptic:spec') && /maps retired to 200/.test(c.prompt)))
-})
-
 test('an extra lens may be a function of the base ref', async () => {
   const parity = { key: 'parity', tiers: ['full'], ask: (base) => `Compare with legacy against ${base}.` }
   const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
@@ -473,15 +437,6 @@ test('spec findings reach Learn, and Learn runs once', async () => {
   const learns = ctx.calls.filter((c) => c.label === 'learn')
   assert.equal(learns.length, 1)
   assert.match(learns[0].prompt, /the spec returns 410/)
-})
-
-test('a scope finding before the last spec round is revised, not handed back', async () => {
-  const scope = blocker({ category: 'scope', file: 'specs/7-x.md', line: 1, claim: '404 or 410?' })
-  let n = 0
-  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [scope] } : clean) }))
-  const r = await run(ctx, { config: config(), deps: deps() })
-  assert.ok(ctx.calls.some((c) => c.label === 'revise-spec#1'))
-  assert.equal(r.outcome, 'pr')
 })
 
 test('a forced-full or ship:full ticket is not asked for a spec in setup', async () => {
@@ -544,16 +499,6 @@ test('the pull request carries at most three minors, the review at most five', a
   assert.equal(r.minors.length, 3)
 })
 
-test('a spec hand-back lists the gaps already carried', async () => {
-  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no empty case' })
-  const scope = blocker({ category: 'scope', file: 'specs/7-x.md', line: 1, claim: '404 or 410?' })
-  let n = 0
-  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': () => (++n === 1 ? { ...clean, findings: [gap, scope] } : { ...clean, findings: [scope] }) }))
-  const r = await run(ctx, { config: config(), deps: deps() })
-  assert.equal(r.outcome, 'handback')
-  assert.ok(r.alsoOpen.some((f) => f.claim === 'no empty case'))
-})
-
 test('a run that continues an earlier attempt is told to build on it', async () => {
   const ctx = fakeCtx({ ...SHIP_ARGS, continuing: true, notes: 'Answer to the last hand-back: use 404' }, script())
   await run(ctx, { config: config(), deps: deps() })
@@ -596,4 +541,55 @@ test('a spec lens runs on its own model slot', async () => {
   const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
   await run(ctx, { config: config({ lenses: { code: [], spec: [fit2] } }), deps: deps() })
   assert.equal(ctx.calls.find((c) => c.label === 'spec-audit:legacy#1').opts.model, 'm-light')
+})
+
+test('every ticket gets a spec audit, on the strong model, as it gets a code audit', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script())
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.size, 'small')
+  assert.equal(ctx.calls.find((c) => c.label === 'spec-audit:combined#1').opts.model, 'm-strong')
+  assert.equal(r.specRounds.length, 1)
+})
+
+test('every confirmed spec blocker is revised and audited again, a gap as much as a misreading', async () => {
+  const gap = blocker({ category: 'spec-gap', file: 'specs/7-x.md', line: 12, claim: 'no test named for the empty case' })
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'spec-audit:combined': () => (++n === 1 ? { ...clean, findings: [gap] } : clean) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  const labels = ctx.calls.map((c) => c.label)
+  assert.ok(labels.indexOf('revise-spec#1') < labels.indexOf('spec-audit:combined#2'))
+  assert.ok(labels.indexOf('spec-audit:combined#2') < labels.indexOf('implement'))
+  assert.match(ctx.calls.find((c) => c.label === 'revise-spec#1').prompt, /no test named for the empty case/)
+  assert.doesNotMatch(ctx.calls.find((c) => c.label === 'implement').prompt, /no test named for the empty case/)
+  assert.equal(ctx.calls.find((c) => c.label === 'revise-spec#1').opts.model, 'm-strong')
+  assert.equal(r.outcome, 'pr')
+  uniqueLabels(ctx)
+})
+
+test('a spec still not clean at its round limit hands back, nothing carried into a build', async () => {
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'spec-audit:combined': () => ({ ...clean, findings: [blocker({ file: 'specs/7-x.md', line: 100 * ++n, claim: `gap ${n}` })] }) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.equal(r.phase, 'Spec Audit')
+  assert.match(r.reason, /still not clean after 2 rounds/)
+  assert.ok(!ctx.calls.some((c) => c.label === 'implement'))
+})
+
+test('the same spec finding surviving two revisions hands back', async () => {
+  const same = blocker({ category: 'logic', file: 'specs/7-x.md', line: 20, claim: 'the plan never maps the retired state' })
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [same] } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.match(r.reason, /the same finding survived 2 revisions/)
+  assert.equal(ctx.calls.filter((c) => c.label.startsWith('revise-spec')).length, 2)
+})
+
+test('a ticket in question hands back from the spec audit at once', async () => {
+  const scope = blocker({ category: 'scope', file: 'specs/7-x.md', line: 1, claim: '404 or 410?' })
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [scope] } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.match(r.reason, /ticket itself is in question/)
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('revise-spec')))
 })

@@ -27,8 +27,8 @@ export function profileFor(facts, config, { labelledFull = false } = {}) {
     added.push(`${broad.join(', ')} → criteria and rules auditors`)
   }
   if (facts.openQuestions >= 2) {
-    p.specRounds = Math.max(p.specRounds, 1)
-    added.push(`${facts.openQuestions} open design questions → one spec audit`)
+    p.specRounds = Math.max(p.specRounds, 3)
+    added.push(`${facts.openQuestions} open design questions → an extra spec round`)
   }
   return { ...p, why: [facts.why || 'a contained change', ...added].join('; ') }
 }

@@ -63,7 +63,7 @@ export function setupAsk(config, a, writeSpec, specPath) {
       `${config.sizing.heavyAreas.join(', ')} — also write the spec: ${specAsk(config, specPath)} Return it as spec.` : '')
 }
 
-export function implementAsk(config, specPath, carried, list) {
+export function implementAsk(config, specPath) {
   return `Implement ${specPath}. Its *Where* is your map: open those files directly. Write the test first and ` +
     `confirm it fails for the reason you expect, then commit it on its own, red, as "test(…)" — that commit is ` +
     `the evidence the test proves something. Then make the change` +
@@ -72,8 +72,15 @@ export function implementAsk(config, specPath, carried, list) {
     `the project's commit convention and leave \`git status\` clean. Do not run the full gate — the harness ` +
     `runs it next. Return ok=false only if you hit something you cannot resolve; the summary names the proving ` +
     `test and the files changed. Return tryIt (how a reviewer sees the change) and keyFiles (the one to three ` +
-    `files where it lives).` +
-    (carried.length ? `\n\nThe spec audit left these open; resolve each in the build, and say how in the summary:\n${list(carried)}` : '')
+    `files where it lives).`
+}
+
+export function reviseAsk(specPath, open, list) {
+  return `Independent auditors confirmed these problems with ${specPath}:\n\n${list(open)}\n\n` +
+    `Revise the spec to resolve each one at its cause — or, if the ticket itself is wrong, record that under ` +
+    `*Decisions*. A technical question the ticket does not settle is yours to decide: decide it and record it ` +
+    `under *Decisions*. Fresh auditors will read the revised spec. Commit ("docs(spec): …"). Return decisions ` +
+    `as EVERY Decision now in the spec, old and new.`
 }
 
 export function fixAsk(config, specPath, open, list) {
@@ -112,11 +119,10 @@ export const CODE_LENSES = {
     `output it produces.`,
 }
 
-export function auditAsk({ lensAsk, specPath, gateLine, sha, carried, tampered, list }) {
+export function auditAsk({ lensAsk, specPath, gateLine, sha, tampered, list }) {
   return `You are auditing a change you did not write. The spec is ${specPath}. ${lensAsk}\n\n` +
     `The gate has just run green at ${sha.slice(0, 7)}: ${gateLine}. Do not re-run it — read the tests instead; ` +
     `run a command only to prove one specific claim.\n\n` +
-    (carried.length ? `The spec audit left these for the build to resolve — a blocker if any is still unresolved:\n${list(carried)}\n\n` : '') +
     (tampered.length ? `The gate flagged these test lines as removed assertions or added skips:\n${tampered.join('\n')}\n\n` : '') +
     `Blockers only for something that would change a merge decision; everything else is minor. Use ` +
     `category scope only when the TICKET itself contradicts itself or cannot be built as written — that goes ` +

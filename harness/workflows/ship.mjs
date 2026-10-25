@@ -54,9 +54,6 @@ export const meta = {
 // The same finding confirmed this many rounds running means the fixer cannot
 // fix it: hand back early instead of spending the remaining rounds.
 const STUCK_AFTER = 2
-// Only a spec finding that changes what gets built is worth re-planning for.
-// A gap in the plan's detail goes to the builder as a note instead.
-const REPLAN = new Set(['criterion-unmet', 'rules', 'logic', 'scope'])
 
 const realDeps = { gate: runGate, redCheck: runRedCheck, sync: syncBase, facts: diffFacts }
 
@@ -162,55 +159,68 @@ export async function run(ctx, { config, deps = realDeps }) {
     return judged.filter((f) => f !== null)
   }
 
-  // ── 3. Spec Audit ──────────────────────────────────────────────────────────
-  // The cheapest place to catch a misreading: nothing is built yet.
+  // Both audit loops stop by the same rules: a ticket in question goes to a
+  // person at once; the same finding confirmed more than STUCK_AFTER rounds
+  // running is stuck; and a loop that reaches its round limit hands back
+  // with everything still open. `streaks()` keeps one loop's count.
+  function streaks() {
+    const streak = new Map()
+    // Once per key per round: several findings in one ten-line window share a key.
+    return (open) => {
+      const keys = new Set(open.map(key))
+      for (const k of keys) streak.set(k, (streak.get(k) || 0) + 1)
+      for (const k of [...streak.keys()]) if (!keys.has(k)) streak.delete(k)
+      return open.filter((f) => streak.get(key(f)) > STUCK_AFTER)
+    }
+  }
+  function settle(phase, open, stuck, { limit, rounds, fixes }) {
+    if (open.some((f) => f.category === 'scope')) {
+      return handBack(phase, 'the ticket itself is in question', open.filter((f) => f.category === 'scope'), open.filter((f) => f.category !== 'scope'))
+    }
+    if (stuck.length) return handBack(phase, `the same finding survived ${STUCK_AFTER} ${fixes}`, open)
+    if (limit) return handBack(phase, `still not clean after ${rounds} rounds`, open)
+    return null
+  }
+
+  // ── 3. Spec Audit → Revise, until a round is clean ────────────────────────
+  // The same loop as the code audit, run first: the spec decides what gets
+  // built, so a misreading caught here costs one revision, not a build. Every
+  // confirmed blocker is revised and the revision audited again by fresh
+  // auditors; nothing is carried past it to the builder.
   const specLenses = [
     ...Object.entries(P.SPEC_LENSES).map(([k, ask]) => ({ key: k, ask })),
     ...config.lenses.spec.map((l) => ({ ...l, ask: typeof l.ask === 'function' ? l.ask(BASE) : l.ask })),
   ].filter((l) => T.specLenses.includes(l.key) || (l.tiers && l.tiers.includes(T.size)))
-  let carried = []
-  for (let round = 1; round <= T.specRounds; round++) {
+  if (!specLenses.length) return handBack('Spec Audit', `the ${T.size} tier names no spec lens that exists — check tiers.${T.size}.specLenses`)
+  const specStuck = streaks()
+  for (let round = 1; ; round++) {
     ctx.phase('Spec Audit')
     const res = await audit(specLenses, (l, retry) => ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.continuingAudit(a)}${P.specAuditAsk({ lensAsk: l.ask, specPath: spec.path })}`,
-      { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.think) },
+      { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.spec) },
     ))
     if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`)
     const found = res.reports.flatMap(findingsOf)
-    // A carried gap is still in the spec, so the next round raises it again;
-    // only the same problem is skipped, not a new one on the same line.
-    const blockers = found.filter((f) => f.severity === 'blocker' && !carried.some((c) => where(c) === where(f) && c.category === f.category))
-    const confirmed = blockers.length ? await confirm(blockers, 'the spec', round) : []
-    history.push(...confirmed)
-    state.specRounds.push({ round, raised: found.length, confirmed: confirmed.length, what: confirmed.map((f) => f.claim) })
-    ctx.log(`spec round ${round}: ${found.length} raised, ${confirmed.length} confirmed`)
-    carried.push(...confirmed.filter((f) => !REPLAN.has(f.category)))
-    const replan = confirmed.filter((f) => REPLAN.has(f.category))
-    if (!replan.length) break
-    // A person is needed only when the ticket itself is in question.
-    if (round === T.specRounds && replan.some((f) => f.category === 'scope')) {
-      return handBack('Spec Audit', `the ticket itself is in question after ${round} spec rounds`,
-        replan.filter((f) => f.category === 'scope'), [...replan.filter((f) => f.category !== 'scope'), ...carried])
-    }
+    const open = await confirm(found.filter((f) => f.severity === 'blocker'), 'the spec', round)
+    history.push(...open)
+    state.specRounds.push({ round, raised: found.length, confirmed: open.length, what: open.map((f) => f.claim) })
+    ctx.log(`spec round ${round}: ${found.length} raised, ${open.length} confirmed`)
+    if (!open.length) break
+    const stop = settle('Spec Audit', open, specStuck(open), { limit: round >= T.specRounds, rounds: round, fixes: 'revisions' })
+    if (stop) return stop
     const revised = await ctx.agent(
-      `${COMMON}\n\n${ticket}\n\nIndependent auditors confirmed these problems with ${spec.path}:\n\n${listFindings(replan)}\n\n` +
-      `Revise the spec to resolve each one — or, if the ticket itself is wrong, record that under *Decisions*. ` +
-      `A technical question the ticket does not settle is yours to decide: decide it and record it under ` +
-      `*Decisions*. Commit ("docs(spec): …"). Return decisions as EVERY Decision now in the spec, old and new.`,
-      { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(T.think) },
+      `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.reviseAsk(spec.path, open, listFindings)}`,
+      { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(T.spec) },
     )
-    if (!revised) return handBack('Spec Audit', 'the spec reviser did not finish', replan)
+    if (!revised) return handBack('Spec Audit', 'the spec reviser did not finish', open)
     // The revision's decisions are the ones the reviewer must answer.
     spec = state.spec = { ...spec, ...revised, path: spec.path }
-    // Anything still open after the last round is the builder's to resolve,
-    // and the code audit checks that it did.
-    if (round === T.specRounds) { carried.push(...replan); break }
   }
 
   // ── 4. Implement ───────────────────────────────────────────────────────────
   ctx.phase('Implement')
   const built = await ctx.agent(
-    `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.implementAsk(config, spec.path, carried, listFindings)}`,
+    `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.implementAsk(config, spec.path)}`,
     { label: 'implement', schema: DONE, model: m(T.build) },
   )
   if (!built || !built.ok) return handBack('Implement', built ? built.summary : 'the implementer did not finish')
@@ -226,7 +236,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   let lenses = lensesFor(T)
   // No lens is no audit, and an audit nobody ran is not a clean one.
   if (!lenses.length) return handBack('Code Audit', `the ${T.size} tier names no code lens that exists — check tiers.${T.size}.codeLenses`)
-  const streak = new Map()
+  const codeStuck = streaks()
   let audited = 0, redStreak = 0, gate = null, open = [], minors = []
 
   for (let round = 1; ; round++) {
@@ -268,7 +278,7 @@ export async function run(ctx, { config, deps = realDeps }) {
       // Would the new tests fail without the change? A command answers it.
       lastRed = await deps.redCheck({ config, cwd, base: BASE, signal: ctx.signal })
       const res = await audit(lenses, (l, retry) => ctx.agent(
-        `${COMMON}\n\n${ticket}\n\n${P.auditAsk({ lensAsk: l.ask, specPath: spec.path, gateLine: gateLine(gate), sha: gate.sha, carried, tampered: gate.tampered, list: listFindings })}`,
+        `${COMMON}\n\n${ticket}\n\n${P.auditAsk({ lensAsk: l.ask, specPath: spec.path, gateLine: gateLine(gate), sha: gate.sha, tampered: gate.tampered, list: listFindings })}`,
         { label: `audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.think) },
       ))
       // What the last round confirmed was fixed but never re-audited.
@@ -289,16 +299,8 @@ export async function run(ctx, { config, deps = realDeps }) {
       }
     }
 
-    // Once per key per round: several findings in one ten-line window share a key.
-    const roundKeys = new Set(open.map(key))
-    for (const k of roundKeys) streak.set(k, (streak.get(k) || 0) + 1)
-    for (const k of [...streak.keys()]) if (!roundKeys.has(k)) streak.delete(k)
-    const stuck = open.filter((f) => streak.get(key(f)) > STUCK_AFTER)
-    if (open.some((f) => f.category === 'scope')) {
-      return handBack('Code Audit', 'the ticket itself is in question', open.filter((f) => f.category === 'scope'), open.filter((f) => f.category !== 'scope'))
-    }
-    if (stuck.length) return handBack('Code Audit', `the same finding survived ${STUCK_AFTER} fix attempts`, open)
-    if (audited >= T.buildRounds || round >= T.buildRounds + 2) return handBack('Code Audit', `still not clean after ${round} rounds`, open)
+    const stop = settle('Code Audit', open, codeStuck(open), { limit: audited >= T.buildRounds || round >= T.buildRounds + 2, rounds: round, fixes: 'fix attempts' })
+    if (stop) return stop
 
     const fixed = await ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.fixAsk(config, spec.path, open, listFindings)}`,

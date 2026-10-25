@@ -45,15 +45,18 @@ export const DEFAULTS = {
   // catches it. Small keeps what makes the loop trustworthy — the gate, an
   // independent audit, a skeptic on every blocker — and drops redundancy.
   tiers: {
+    // `spec` is the model for the spec audit and its revisions. The spec
+    // decides what gets built, so it gets the strong model, and at least as
+    // many rounds as the build, on every tier.
     small: {
-      specRounds: 0, buildRounds: 2,
+      specRounds: 2, buildRounds: 2,
       specLenses: ['combined'], codeLenses: ['combined'],
-      think: 'standard', build: 'standard',
+      spec: 'strong', think: 'standard', build: 'standard',
     },
     full: {
-      specRounds: 3, buildRounds: 4,
+      specRounds: 4, buildRounds: 4,
       specLenses: ['criteria', 'fit'], codeLenses: ['criteria', 'rules'],
-      think: 'strong', build: 'strong',
+      spec: 'strong', think: 'strong', build: 'strong',
     },
   },
   lenses: { code: [], spec: [] },
@@ -112,7 +115,7 @@ export function resolveConfig(user = {}) {
   for (const k of ['weakenedIfRemoved', 'weakenedIfAdded']) if (c.tests[k] instanceof RegExp && (c.tests[k].global || c.tests[k].sticky)) problems.push(`tests.${k} must not use the g or y flag`)
   if (problems.length) throw new Error(`harness.config.mjs: ${problems.join('; ')}`)
   for (const t of Object.values(c.tiers)) {
-    for (const k of ['think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)
+    for (const k of ['spec', 'think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)
   }
   for (const [kind, ls] of [['code', c.lenses.code], ['spec', c.lenses.spec]]) {
     const seen = new Set()
@@ -138,7 +141,7 @@ export function resolveConfig(user = {}) {
   // every confirmed blocker without trying to fix it.
   for (const [name, t] of Object.entries(c.tiers)) {
     if (!Number.isInteger(t.buildRounds) || t.buildRounds < 2) problems.push(`tiers.${name}.buildRounds must be a whole number of at least 2`)
-    if (!Number.isInteger(t.specRounds) || t.specRounds < 0) problems.push(`tiers.${name}.specRounds must be a whole number, 0 or more`)
+    if (!Number.isInteger(t.specRounds) || t.specRounds < 2) problems.push(`tiers.${name}.specRounds must be a whole number of at least 2`)
   }
   for (const k of ['source', 'tests', 'risky']) if (!Array.isArray(c.paths[k])) problems.push(`paths.${k} must be a list of path prefixes`)
   for (const [name, t] of Object.entries(c.tiers)) {

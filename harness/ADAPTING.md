@@ -261,6 +261,14 @@ Copilot model id. `null` uses Copilot's default. Start with all three set to `nu
 whatever the plan offers. Then set them: run `copilot` interactively and use `/model` to list the ids and
 their relative costs. Setup always uses `strong`, because every later step is sized by its call.
 
+Each tier names a slot for three kinds of work: `spec` (the spec audit and its revisions), `think` (the
+code audit and skeptics) and `build` (implementing and fixing). The spec audit is the same loop as the
+code audit, and runs first on every ticket. Fresh auditors read the spec, a skeptic tries to refute each
+blocker, and every confirmed one is revised and audited again, until a round comes back clean. The same
+finding surviving two revisions, or the tier's `specRounds`, hands the ticket back before anything is
+built. Because the spec decides what gets built, `spec` defaults to `strong` on every tier, and
+`specRounds` is at least `buildRounds`. Both must be at least 2.
+
 **Check:** `node --test harness/test/*.test.mjs` still passes after your config changes. The tests use
 their own config, so a failure here means you've changed the harness itself.
 
@@ -335,7 +343,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 143 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 142 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'

@@ -41,7 +41,7 @@ test('sizing: small is the base, each risk adds its check', () => {
   const api = profileFor({ ...smallFacts, changesApi: true }, c)
   assert.equal(api.size, 'small')
   assert.deepEqual(api.codeLenses, ['criteria', 'rules'])
-  assert.equal(profileFor({ ...smallFacts, openQuestions: 2 }, c).specRounds, 1)
+  assert.equal(profileFor({ ...smallFacts, openQuestions: 2 }, c).specRounds, 3)
 })
 
 test('escalation reads the diff, and only once', () => {

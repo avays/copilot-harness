@@ -30,8 +30,8 @@ export default {
     // App code: what tests must prove. Red-check reverts these to the base.
     source: ['src/main/'],
     tests: ['src/test/'],
-    // A small run whose diff reaches one of these is escalated to the full
-    // loop. Put what is expensive to get wrong here.
+    // A small run whose diff reaches one of these gets the full loop's
+    // auditors and model. Put what is expensive to get wrong here.
     risky: [
       'pom.xml',
       // The gate command is the base's, but it runs the branch's own build
