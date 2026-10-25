@@ -96,7 +96,8 @@ jobs:
     outputs:
       isolated: ${{ steps.isolate.outcome }}
       clean: ${{ steps.stop.outputs.clean }}
-    # Read-only, and no step below is given a GitHub token.
+    # Read-only: the job's token is used by the checkout and setup actions,
+    # and no run step is given it.
     permissions:
       contents: read
     steps:
@@ -183,6 +184,15 @@ jobs:
           # Nothing scheduled may start agent code again after the kill below.
           echo "$A" | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
           sudo systemctl stop cron atd >/dev/null 2>&1 || true
+          # The image ships PATH folders world-writable (/usr/local/bin, the tool cache under /opt):
+          # take group and world write off each, its contents and its parents, while sudo still works.
+          IFS=: read -ra dirs <<< "$PATH"
+          for d in "${dirs[@]}"; do
+            [ -d "$d" ] || continue
+            r=$(readlink -f -- "$d")
+            sudo chmod -R go-w -- "$r"
+            p=$r; while [ "$p" != / ]; do p=$(dirname -- "$p"); sudo chmod go-w -- "$p"; done
+          done
           for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
           # From here on: runner may act as harness-agent, and as nobody else.
           sudo sh -c "rm -f /etc/sudoers.d/*; echo '$USER ALL=($A) NOPASSWD:SETENV: ALL' > /etc/sudoers.d/harness-agent; chmod 440 /etc/sudoers.d/harness-agent"
@@ -192,9 +202,19 @@ jobs:
           if sudo -n -u "$A" sudo -n true 2>/dev/null; then echo "::error::$A can sudo"; exit 1; fi
           if sudo -n -u "$A" docker info >/dev/null 2>&1; then echo "::error::$A can reach Docker"; exit 1; fi
           if sudo -n -u "$A" test -r "$RUNNER_TEMP" || sudo -n -u "$A" test -x "$HOME"; then echo "::error::$A can reach the runner's home"; exit 1; fi
-          # The runner's later steps run tools from PATH: none of its folders may be the agents' to write.
+          # The runner's later steps (and the runner, finding bash) run tools from PATH: none of it may be
+          # the agents' to write — a folder, a file in it, or a parent they could rename it out of.
           IFS=: read -ra dirs <<< "$PATH"
-          for d in "${dirs[@]}"; do if [ -d "$d" ] && sudo -n -u "$A" test -w "$d"; then echo "::error::$A can write $d, which is on PATH"; exit 1; fi; done
+          for d in "${dirs[@]}"; do
+            [ -d "$d" ] || continue
+            r=$(readlink -f -- "$d")
+            if [ -n "$(sudo -n -u "$A" find "$r" -maxdepth 1 -writable -print -quit 2>/dev/null)" ]; then echo "::error::$A can write in $r, which is on PATH"; exit 1; fi
+            p=$r
+            while [ "$p" != / ]; do
+              p=$(dirname -- "$p")
+              if sudo -n -u "$A" test -w "$p" && [ ! -k "$p" ]; then echo "::error::$A can write $p, a parent of $r on PATH"; exit 1; fi
+            done
+          done
 
       # As harness-agent, from the read-only copy of the trusted checkout. Then
       # every process of that user is killed at once (kill -1), before the
@@ -205,19 +225,19 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
           status=0
-          sudo -n -u harness-agent --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME -- \
+          /usr/bin/sudo -n -u harness-agent --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME -- \
             env "PATH=$PATH" node harness/bin/run.mjs ship "$ISSUE" --phase build || status=$?
-          sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
+          /usr/bin/sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
           exit $status
 
       - name: Stop everything the agents started
         id: stop
         if: always()
         run: |
-          sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
-          sleep 1
+          /usr/bin/sudo -n -u harness-agent kill -9 -1 2>/dev/null || true
+          /usr/bin/sleep 1
           # Collect relies on this: nothing of theirs may still be running.
-          if pgrep -u harness-agent >/dev/null; then echo "::error::processes of harness-agent survived"; exit 1; fi
+          if /usr/bin/pgrep -u harness-agent >/dev/null; then echo "::error::processes of harness-agent survived"; exit 1; fi
           echo "clean=true" >> "$GITHUB_OUTPUT"
 
       # The uploads run as runner. Reading the agents' folder directly, they
@@ -227,8 +247,11 @@ jobs:
       # dead; the uploads read the copy.
       - name: Collect the agents' outputs
         if: always() && steps.stop.outputs.clean == 'true'
+        # ADAPT: any other secret the build step was given (a package token)
+        # goes here too, and its name in HARNESS_MASK.
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          HARNESS_MASK: ""
         run: |
           out="$RUNNER_TEMP/harness-out"
           rm -rf "$out"; mkdir -p "$out"

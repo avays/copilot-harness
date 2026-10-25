@@ -34,6 +34,10 @@ export default {
     // loop. Put what is expensive to get wrong here.
     risky: [
       'pom.xml',
+      // The gate command is the base's, but it runs the branch's own build
+      // wrapper and its Maven config: changes there change the gate.
+      'mvnw',
+      '.mvn/',
       'src/main/resources/db/',
       'src/main/resources/application',
       '.github/',

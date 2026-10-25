@@ -116,7 +116,8 @@ copilot --experimental --allow-tool=read --allow-tool=write --allow-tool='shell(
 Copilot reports what every run used (`workflow.run_settled` → AI credits and the number of agents), and
 the harness prints it at the foot of each PR and review comment. Expect, from the loop's shape rather
 than from measurement (no agent has run yet), at least three agents for a small ticket (setup,
-implement, one auditor), plus a skeptic per blocker and a fixer per round; a full ticket, fifteen or
+implement, one auditor), plus a skeptic per blocker, a fixer per round, and up to three skeptics for
+the minors on the final round; a full ticket, fifteen or
 more. Measure a few of your own tickets before setting `copilot.limits`.
 
 ## Status

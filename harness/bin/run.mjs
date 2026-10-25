@@ -362,9 +362,11 @@ async function shipBuild(opt, root, config, state) {
 
 /** Why publish has no build result, from what the build job reported. */
 export function missingBuild(env) {
-  if (env.BUILD_ISOLATED && env.BUILD_ISOLATED !== 'success') return 'the build job could not isolate the agents (its "Isolate the agents" step failed closed), so no agent ran — its log says which check'
-  if (env.BUILD_RESULT === 'success' && env.BUILD_CLEAN !== 'true') return 'agent processes survived the end of the build, so its outputs were not collected — its log names them'
-  return 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which'
+  if (env.BUILD_ISOLATED === 'failure') return 'the build job could not isolate the agents (its "Isolate the agents" step failed closed), so no agent ran — its log says which check'
+  // The Stop step fails the job when processes survive, so this is read
+  // whatever the job's result.
+  if (env.BUILD_ISOLATED === 'success' && env.BUILD_CLEAN !== 'true') return 'agent processes survived the end of the build, or the build stopped before them, so its outputs were not collected — its log says which'
+  return 'the build job did not finish (a failed setup step, a timeout, a cancellation or a lost runner) — its log says which'
 }
 
 async function shipPublish(opt, root, config, state, built) {

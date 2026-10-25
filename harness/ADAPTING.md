@@ -153,7 +153,7 @@ commands: {
   command's `--preserve-env=` list. In `harness-ship.yml` (and in `harness-review.yml`, if reviewers
   build):
 
-  Three additions, nothing else in the step changes:
+  Additions to three steps, nothing else changes:
 
   ```yaml
   - uses: actions/setup-java@v4
@@ -171,6 +171,12 @@ commands: {
       MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}     # added
     # …and in its run: line, append ",MAVEN_USER,MAVEN_TOKEN" to the existing
     # --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME list.
+
+  - name: Collect the agents' outputs
+    env:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}     # added
+      HARNESS_MASK: MAVEN_TOKEN                        # added: masked in the artifacts
   ```
 
   `copilot.extensionEnv` doesn't apply here: it concerns what Copilot passes on to its extension, and the
@@ -185,7 +191,7 @@ detection, escalation and review sizing all go quiet without an error. Doctor fa
 
 - **`source`**: app code; red-check reverts it. Leave out legacy code that tickets don't change.
 - **`tests`**: where tests live. Only test files under these paths count as the branch's tests.
-- **`risky`**: a small run whose diff touches one of these is escalated to the full loop. They are
+- **`risky`**: a small run whose diff touches one of these gets the full loop's auditors and thinking model (and at least three rounds). They are
   prefixes too, **with no globs**. For a migration, consider `src/main/resources/META-INF/persistence.xml`,
   `src/main/resources/application` (which covers `application.yml` and `application-prod.yml`), the
   Flyway or Liquibase folder, security configuration, every module's `pom.xml` (`pom.xml`, `app/pom.xml`),
@@ -242,8 +248,10 @@ A lens's `ask` is all its auditor is told about its job, on top of the ticket, t
 Write it like a brief for a reviewer who has never seen the project. It may be a string, or a function
 of the base ref (`(base) => \`… git diff ${base}...HEAD …\``). A lens needs `tiers` (`small`, `full`), or a
 tier's `codeLenses` / `specLenses` must list its key. Its key can't be one of the built-in lenses'
-(`combined`, `criteria`, `rules`, `tests`, `fit`). Its optional `model` is a slot (`light`, `standard`,
-`strong`), for code and spec lenses alike. The config refuses anything else, because a lens that never runs would read as a clean
+(a code lens: `combined`, `criteria`, `rules`, `tests`; a spec lens: `combined`, `criteria`, `fit`). Its
+optional `model` is a slot (`light`, `standard`, `strong`), for code and spec lenses alike. Code lenses
+also run in **reviews**, on every pull request of their tier (`small` for every review, `full` for large
+ones), people's included: write the `ask` so it makes sense there, and remember each one costs credits. The config refuses anything else, because a lens that never runs would read as a clean
 audit.
 
 ### `models` and `tiers`
@@ -349,7 +357,8 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   first few tickets.
 - **`run.mjs`'s prepare and publish phases, and the Actions jobs end to end** — claiming, the bundle hand-off,
   pushing, opening and readying pull requests, relabelling, dispatching the review and updating its
-  comment. No test covers them, because they talk to GitHub. §7 steps 6–8 do.
+  comment. No test covers their GitHub calls; the decisions they make (why a build has no result, workflow
+  edits, hand-back answers) are unit-tested. §7 steps 6–8 cover the rest.
 - **The token's Copilot Requests permission.** `--live` makes no model call; the first ticket does.
 - **Structured output from the models you choose.** Copilot validates each agent's answer against the
   schema and re-asks once. A model that keeps failing makes that agent return null, which the harness
@@ -384,7 +393,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   trusted folder removed. A folder you once trusted interactively therefore stays untrusted here (shown
   live on CLI 1.0.103: with your trust linked in, the workspace's extension loaded; staged, it did not).
   So agents' edits to `harness/` or `harness.config.mjs` on a branch can't change the loop, the limits
-  or the gate of a later run. The staged home also keeps the run's own sessions, logs and settings, so a run
+  or the gate *command* of a later run. The gate does run the branch's own build files (`mvnw`, `.mvn/`,
+  `pom.xml`), so a change there changes what the gate checks: keep them in `paths.risky` (the default
+  does), so that such a change brings in the full auditors. The staged home also keeps the run's own sessions, logs and settings, so a run
   leaves nothing in your `~/.copilot` (it used to switch experimental mode on there).
 - **In Actions, the agents run as a user of their own.** The build job creates an unprivileged
   `harness-agent` user. It copies the trusted checkout to `/srv/harness/root`, owned by root and read-only
@@ -401,8 +412,10 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   fails, and skips the copy below, if any survives. Nothing they scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
   regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
   can't make the upload read the runner's own environment. Then it masks the Copilot token in every file
-  of that copy, as the job log masks it. The uploads read that copy. *Isolate the agents* also fails if
-  the agents' user can write any folder on `PATH`, since the runner's later steps run tools from there.
+  of that copy, as the job log masks it. The uploads read that copy. *Isolate the agents* also takes group
+  and world write off every folder on `PATH`, their contents and their parents — the hosted image ships
+  `/usr/local/bin` and the tool cache under `/opt` world-writable — and fails if the agents' user can
+  still write any of them, since the runner, and its later steps, run tools from there.
 - **No GitHub credential in the agents' reach.** The build job's read-only token is used only by the
   checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Ship's
   trusted checkouts are pinned to the default branch. Review's are pinned to the pull request's base, or

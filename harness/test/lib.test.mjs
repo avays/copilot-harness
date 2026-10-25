@@ -469,14 +469,19 @@ test('mask removes the Copilot token from every collected file', async () => {
   mkdirSync(join(d, 'runs', 'r'), { recursive: true })
   writeFileSync(join(d, 'runs', 'r', 'result.json'), '{"out":"github_pat_S3CRET and github_pat_S3CRET"}')
   writeFileSync(join(d, 'other.txt'), 'nothing here')
-  assert.equal(mask(d, 'github_pat_S3CRET'), 1)
+  assert.equal(mask(d, ['github_pat_S3CRET', undefined]), 1)
   assert.equal(readFileSync(join(d, 'runs', 'r', 'result.json'), 'utf8'), '{"out":"*** and ***"}')
   assert.equal(mask(d, ''), 0)
+  writeFileSync(join(d, 'other.txt'), 'maven_tok_ABC')
+  assert.equal(mask(d, ['github_pat_S3CRET', 'maven_tok_ABC']), 1)
+  assert.equal(readFileSync(join(d, 'other.txt'), 'utf8'), '***')
 })
 
 test('publish says why there is no build result', async () => {
   const { missingBuild } = await import('../bin/run.mjs')
-  assert.match(missingBuild({ BUILD_ISOLATED: 'failure' }), /could not isolate the agents/)
-  assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'success', BUILD_CLEAN: '' }), /survived the end of the build/)
-  assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'failure' }), /did not finish/)
+  assert.match(missingBuild({ BUILD_ISOLATED: 'failure', BUILD_RESULT: 'failure' }), /could not isolate the agents/)
+  // Survivors fail the job: that is the case to report, not a "success".
+  assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'failure', BUILD_CLEAN: '' }), /survived the end of the build/)
+  // A setup step that failed before Isolate is not an isolation failure.
+  assert.match(missingBuild({ BUILD_ISOLATED: 'skipped', BUILD_RESULT: 'failure' }), /did not finish \(a failed setup step/)
 })

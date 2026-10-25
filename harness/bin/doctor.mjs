@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Is this checkout ready for the harness? Read-only, and safe to re-run.
 //
-//   node harness/bin/doctor.mjs          # local checks, no network beyond gh auth status
+//   node harness/bin/doctor.mjs          # local checks, plus read-only gh calls
 //   node harness/bin/doctor.mjs --live   # also runs the harness-ping workflow (no agents, no AI credits)
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
