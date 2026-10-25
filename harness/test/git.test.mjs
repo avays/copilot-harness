@@ -196,3 +196,28 @@ test('a workflow the base fixed after the branch began is caught too', async () 
   g('checkout', '-q', 'work')
   assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir), ['.github/workflows/ci.yml'])
 })
+
+test('a branch that only lags the base\'s new workflow is not flagged; one that brings back an older one is', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, '.github/workflows'), { recursive: true })
+  writeFileSync(join(dir, '.github/workflows/ci.yml'), 'v1\n')
+  g('checkout', '-q', 'main'); g('add', '-A'); g('commit', '-qm', 'v1'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  writeFileSync(join(dir, '.github/workflows/ci.yml'), 'v2\n'); g('commit', '-qam', 'v2'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  const claimed = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+  // Built on v2 (the base at the claim); then the base moves to v3 during the build.
+  g('checkout', '-q', '-B', 'work', 'main'); writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 404; }\n'); g('commit', '-qam', 'work')
+  g('checkout', '-q', 'main'); writeFileSync(join(dir, '.github/workflows/ci.yml'), 'v3\n'); g('commit', '-qam', 'v3'); g('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  g('checkout', '-q', 'work')
+  assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir, claimed), [])
+  // A branch whose copy is v1, older than anything since the claim, is bringing it back.
+  g('checkout', '-q', '-B', 'old', `${claimed}~1`); writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 410; }\n'); g('commit', '-qam', 'old work')
+  assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir, claimed), ['.github/workflows/ci.yml'])
+})
+
+test('a local action anywhere in the tree is refused like a workflow', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, 'tools/deploy'), { recursive: true })
+  writeFileSync(join(dir, 'tools/deploy/action.yml'), 'runs: { using: composite, steps: [] }\n')
+  g('add', '-A'); g('commit', '-qm', 'an action outside .github')
+  assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir), ['tools/deploy/action.yml'])
+})

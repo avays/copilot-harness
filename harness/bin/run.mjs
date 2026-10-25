@@ -283,7 +283,9 @@ async function branchFor(n, title, root) {
   const r = await git(['ls-remote', '--heads', 'origin', `harness/${n}-*`], { cwd: root })
   if (r.code !== 0) throw new Error(`git ls-remote: ${r.out.trim()}`)
   // ls-remote patterns match the end of a ref: keep only harness/<n>-…
-  const found = r.stdout.split('\n').map((l) => l.split('\trefs/heads/')[1]).filter((b) => b && b.startsWith(`harness/${n}-`))
+  // Only names publish would accept: a person's harness/12-Fix_x would cost a
+  // full build and then be refused.
+  const found = r.stdout.split('\n').map((l) => l.split('\trefs/heads/')[1]).filter((b) => b && new RegExp(`^harness/${n}-[a-z0-9-]+$`).test(b))
   for (const b of found) {
     const pr = await GH.openPrFor(b, root)
     if (pr) return { branch: b, onRemote: true, existing: pr }
@@ -315,14 +317,32 @@ async function worktreeFor(root, workdir, branch, onRemote, base) {
  * pathspec does the filtering and -z turns off git's path quoting: filtered
  * by prefix, a quoted name (non-ASCII, a tab) would slip past.
  */
-export async function workflowEdits(baseRef, ref, cwd) {
-  // From the merge base (what the branch changed), and tree against tree: a
-  // branch with an old merge base could otherwise bring back a workflow the
-  // base has since fixed.
-  const paths = ['--', '.github/workflows/', '.github/actions/']
-  const since = (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, ...paths], cwd, 'git diff')).split('\0')
-  const trees = (await must(['diff', '--name-only', '-z', baseRef, ref, ...paths], cwd, 'git diff')).split('\0')
-  return [...new Set([...since, ...trees])].filter(Boolean)
+// What a workflow runs: workflow files, and local actions wherever they are.
+const WORKFLOW_PATHS = ['--', '.github/workflows/', '.github/actions/', ':(glob)**/action.yml', ':(glob)**/action.yaml']
+
+/**
+ * Workflow files and local actions a ref changes against the base:
+ *  - what the branch itself changed (from the merge base); and
+ *  - where its tree differs from the base's today, unless its copy is one
+ *    the base itself has had since `claimedAt` (the base commit when the
+ *    ticket was claimed). A branch built on an older base merely lags; one
+ *    that brings back a workflow the base has since replaced does not.
+ */
+export async function workflowEdits(baseRef, ref, cwd, claimedAt = null) {
+  const since = (await must(['diff', '--name-only', '-z', `${baseRef}...${ref}`, ...WORKFLOW_PATHS], cwd, 'git diff')).split('\0').filter(Boolean)
+  const trees = (await must(['diff', '--name-only', '-z', baseRef, ref, ...WORKFLOW_PATHS], cwd, 'git diff')).split('\0').filter(Boolean)
+  const blob = async (rev, path) => { const r = await git(['rev-parse', '--verify', '--quiet', `${rev}:${path}`], { cwd }); return r.code === 0 ? r.stdout.trim() : 'missing' }
+  const known = claimedAt
+    ? [claimedAt, ...(await must(['rev-list', `${claimedAt}..${baseRef}`], cwd, 'git rev-list')).split('\n').filter(Boolean)]
+    : []
+  const brought = []
+  for (const path of trees.filter((p) => !since.includes(p))) {
+    const mine = await blob(ref, path)
+    let lagging = false
+    for (const c of known) if ((await blob(c, path)) === mine) { lagging = true; break }
+    if (!lagging) brought.push(path)
+  }
+  return [...since, ...brought]
 }
 
 // cmd.exe, which runs npm's .cmd shim, splits unquoted arguments at spaces.
@@ -357,7 +377,11 @@ async function shipPrepare(opt, root, config) {
   const { answer, skipped } = await GH.answerSince(t.comments, SHIP_MARKER, (login, c) => GH.writer(login, c, root), harnessLogin)
   if (skipped.length) console.error(`harness: ignored comments from ${skipped.join(', ')} — only people with write access answer a hand-back`)
   const notes = [opt.notes, answer].filter(Boolean).join('\n\n')
-  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes, size: opt.size, claimed }
+  // The base as it was at the claim: publish tells a branch that merely
+  // lags the base from one that brings back an older workflow.
+  const tip = await git(['ls-remote', 'origin', `refs/heads/${base}`], { cwd: root })
+  const baseSha = (tip.stdout.split('\t')[0] || '').trim() || null
+  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, baseSha, existing, notes, size: opt.size, claimed }
   writeHandoff(root, opt, 'prepare', state)
   output({ skip: 'false', branch, ref: onRemote ? branch : base })
   return state
@@ -472,7 +496,8 @@ async function shipPublish(opt, root, config, state, built) {
   if (ahead === 0 && result.outcome === 'pr') Object.assign(result, { outcome: 'handback', phase: 'PR', reason: 'the run finished with no commits to push' })
   // A pushed workflow file runs, on that branch, with this repository's
   // secrets. Agent-written workflows are never pushed; a person applies them.
-  const edits = ahead > 0 ? await workflowEdits(`origin/${base}`, ref, cwd) : []
+  const claimedAt = /^[0-9a-f]{40}$/.test(String(state.baseSha || '')) && (await git(['cat-file', '-e', `${state.baseSha}^{commit}`], { cwd })).code === 0 ? state.baseSha : null
+  const edits = ahead > 0 ? await workflowEdits(`origin/${base}`, ref, cwd, claimedAt) : []
   if (edits.length) {
     Object.assign(result, { outcome: 'handback', phase: 'PR', reason: `the change edits ${edits.join(', ')}; the harness never pushes workflow files or local actions, so a person must apply it (the run's artifact holds the commits)` })
     await GH.comment(n, shipIssueComment(result, '', state.claimed), root)

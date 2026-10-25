@@ -697,3 +697,15 @@ test('a review finds its ticket from a harness branch, whatever the base', async
   assert.equal(issueFromBranch('feature/42-x'), null)
   assert.equal(issueFromBranch(undefined), null)
 })
+
+test('a file named after a secret is not uploaded', async () => {
+  const { mask } = await import('../bin/mask.mjs')
+  const fs = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const d = fs.mkdtempSync(join(tmpdir(), 'mask-name-'))
+  fs.writeFileSync(join(d, 'SECRETTOKEN123.txt'), 'nothing')
+  fs.writeFileSync(join(d, 'ok.txt'), 'fine')
+  mask(d, ['SECRETTOKEN123'])
+  assert.deepEqual(fs.readdirSync(d), ['ok.txt'])
+})

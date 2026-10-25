@@ -364,7 +364,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 172 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 175 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -396,6 +396,11 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   rules match on the first subcommand, so a git alias might get round `shell(git push)`. The harness
   doesn't rely on the deny list (see *Isolation* below). Check that an agent *can* run `./mvnw` and
   `git commit` in the workspace, and that nothing it needs is denied.
+- **Settings a workspace may override.** A branch's `.github/copilot/settings.json` can set some Copilot
+  settings for a run in it (`copilot config --repo` lists them, including `model` and `effortLevel`).
+  Plugins, hooks and MCP servers there are gated on folder trust, which the staged home never grants;
+  whether `model` and `effortLevel` are too isn't proved. Set every `models` slot to an id, so the harness
+  passes `--model` itself, and check the first real run's agents used the models you set.
 - **Repository hooks in the workspace** (`.github/hooks/*.json`). Copilot gates them on folder trust as it
   does extensions, and the staged home trusts no folder, but whether one fires in a headless agent
   session hasn't been observed: `ping` starts no agent. The first real run will show it.
@@ -441,7 +446,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   fails, and skips the copy below, if any survives. Nothing they scheduled can start again. Only then does a step running as the runner copy the agents' outputs:
   regular files only, never following a link, so a link to `/proc/self/environ` left in the outputs
   can't make the upload read the runner's own environment. Then it masks literal occurrences of the Copilot token (and anything named in `HARNESS_MASK`) in every text file
-  of that copy (the job log also hides encoded forms; this replaces the literal token only). The uploads read that copy. *Isolate the agents* also takes group
+  of that copy (the job log also hides encoded forms; this replaces the literal token only). The runner also reads the agents' commits from its own clone of the branch, which the agents never
+  touched, and uploads nothing if they contain a secret: the commits travel as a bundle, which masking
+  can't reach. The uploads read that copy. *Isolate the agents* also takes group
   and world write off every folder on `PATH`, their contents and their parents — the hosted image ships
   `/usr/local/bin` and the tool cache under `/opt` world-writable — and fails if the agents' user can
   still write any of them, since the runner, and its later steps, run tools from there.
@@ -452,7 +459,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   hand from another branch still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
   jobs that never run branch code. The work crosses to publish as a git bundle. Publish takes the issue,
   branch and title from the claim (never from the build), checks where it is pushing, never pushes a
-  workflow file or a local action (`.github/actions/`), and makes every field of the build's report
+  workflow file or a local action (`.github/actions/`, or any `action.yml` elsewhere), and makes every field of the build's report
   that reaches GitHub inert (no closing keywords, no @mentions) or a plain number.
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
   read that token, and anything else the build job gives it (a read-only package token, if you add

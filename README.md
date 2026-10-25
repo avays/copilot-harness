@@ -178,7 +178,7 @@ might go wrong, through a bad model or a prompt-injected ticket, and limits what
 | GitHub token | none in the agents' reach; claim and publish are separate jobs | removed from their environment, but your stored credentials are readable |
 | sudo, Docker | removed and verified before agents start (fails closed) | whatever you have |
 | The harness that runs | ship: the default branch's; review: the pull request base's; never the branch's | the checkout you run from |
-| Pushing | publish pushes a bundle; never anything under `.github/workflows/` or `.github/actions/` | `run.mjs` pushes; agents' git has no credential helper |
+| Pushing | publish pushes a bundle; never a workflow file or a local action (`.github/actions/`, any `action.yml`) | `run.mjs` pushes; agents' git has no credential helper |
 | Agent text on GitHub | the build's report (PR body, comments) made inert: no closing keywords, no @mentions. Commit messages are the agents' own; closing keywords in them are flagged at the top of the PR | the same |
 
 **What an agent that went wrong can still do in Actions:**
@@ -517,7 +517,7 @@ Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The
 1.0.103, and `--experimental` is required.
 
 **Proven:**
-- **The loop logic:** 172 tests against a fake Copilot context and real git repositories.
+- **The loop logic:** 175 tests against a fake Copilot context and real git repositories.
 - **Loading and running headless:** Copilot CLI loads the staged harness headless and runs a workflow
   (`doctor --live`).
 - **The workflow files** pass actionlint.

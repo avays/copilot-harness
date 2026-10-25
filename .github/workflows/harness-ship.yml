@@ -262,6 +262,19 @@ jobs:
           /usr/bin/find -P handoff runs -type f \( -name 'ship-*.build.json' -o -name 'ship-*.bundle' -o -path 'runs/*' \) -exec /usr/bin/cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
           # The job log masks secrets; an artifact does not.
           node "$GITHUB_WORKSPACE/harness/bin/mask.mjs" "$out"
+          # The commits travel as a bundle, which masking can't reach: read them from the runner's own
+          # clone of the branch (the agents never touched it) and refuse a bundle that holds a secret.
+          b="$out/handoff/ship-$ISSUE.bundle"
+          if [ -f "$b" ]; then
+            W="$GITHUB_WORKSPACE/.harness/worktrees/issue-$ISSUE"
+            git -C "$W" fetch -q "$b" "+refs/heads/*:refs/harness/scan/*"
+            for v in COPILOT_GITHUB_TOKEN $HARNESS_MASK; do
+              s="${!v:-}"; [ ${#s} -ge 4 ] || continue
+              if git -C "$W" log -p --format=%B --glob=refs/harness/scan --not --remotes=origin | grep -qF -- "$s"; then
+                echo "::error::the agents' commits contain $v; nothing is uploaded"; rm -f "$b"; exit 1
+              fi
+            done
+          fi
 
       # Only this run's own files: the claim's are already in its artifact.
       - uses: actions/upload-artifact@v4

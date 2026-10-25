@@ -27,6 +27,12 @@ on:
 
 permissions: {}
 
+# One review of a pull request at a time, all three jobs: two at once would
+# each find no comment and post two.
+concurrency:
+  group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
 env:
   PR: ${{ github.event.pull_request.number || inputs.pr }}
 
@@ -35,10 +41,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (!github.event.pull_request.draft &&
-       github.event.pull_request.head.repo.full_name == github.repository)
-    concurrency:
-      group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: true
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     # contents: write only for the permission lookup on hand-back answers;
     # this job runs the base's code, never the pull request's.

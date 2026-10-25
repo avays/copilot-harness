@@ -21,6 +21,8 @@ export function mask(dir, secrets) {
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true, encoding: 'buffer' })) {
       const p = Buffer.concat([d, Buffer.from('/'), e.name])
+      // A name is uploaded too: one that carries a secret goes, contents and all.
+      if (list.some((s) => e.name.toString('latin1').includes(s))) { rmSync(p, { recursive: true, force: true }); changed++; continue }
       if (e.isDirectory()) { walk(p); continue }
       if (!e.isFile()) continue
       // A git bundle is compressed: a token in it is not text to replace.
