@@ -696,3 +696,11 @@ test('a ticket in question is handed back even when a finding is also stuck', as
   const r = await run(ctx, { config: config(), deps: deps() })
   assert.match(r.reason, /ticket itself is in question/)
 })
+
+test('a dead spec auditor after a revision lists the revision nobody re-audited', async () => {
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'spec-audit:': () => (++n === 1 ? { ...clean, findings: [blocker({ claim: 'X' })] } : undefined) }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.phase, 'Spec Audit')
+  assert.deepEqual(r.alsoOpen.map((f) => f.claim), ['X'])
+})

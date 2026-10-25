@@ -17,7 +17,14 @@ function run(bin, args, { cwd, env, signal, timeoutMs }) {
   return new Promise((resolveRun) => {
     const out = []
     const p = spawn(bin, args, { cwd, env: { ...process.env, ...env }, signal, stdio: ['ignore', 'pipe', 'pipe'] })
-    const timer = timeoutMs ? setTimeout(() => p.kill('SIGTERM'), timeoutMs) : null
+    // Killing bash leaves Maven's forked JVMs holding the pipes open, so
+    // `close` would never come: once stopped, stop waiting for the output,
+    // and a JVM still writing to it gets EPIPE and dies.
+    let stopped = false
+    const stop = () => { stopped = true; p.kill('SIGTERM') }
+    const timer = timeoutMs ? setTimeout(stop, timeoutMs) : null
+    if (signal) signal.addEventListener('abort', () => { stopped = true }, { once: true })
+    p.on('exit', (code) => { if (stopped) { p.stdout.destroy(); p.stderr.destroy(); if (timer) clearTimeout(timer); resolveRun({ code: code ?? 1, stdout, stderr, out: out.join('') }) } })
     let stdout = '', stderr = ''
     // Decoded as a stream, so a character split across chunks stays whole.
     p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8')

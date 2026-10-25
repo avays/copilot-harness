@@ -25,8 +25,9 @@ export function mask(dir, secrets) {
       if (list.some((s) => e.name.toString('latin1').includes(s))) { rmSync(p, { recursive: true, force: true }); changed++; continue }
       if (e.isDirectory()) { walk(p); continue }
       if (!e.isFile()) continue
-      // A git bundle is compressed: a token in it is not text to replace.
-      if (e.name.toString().endsWith('.bundle')) continue
+      // The hand-off bundle is compressed, and the workflow scans its commits
+      // instead; any other file named .bundle is masked like the rest.
+      if (/^ship-\d+\.bundle$/.test(e.name.toString()) && d.toString().endsWith('/handoff')) continue
       try {
         const text = readFileSync(p, 'latin1')
         const masked = list.reduce((t, s) => t.split(s).join('***'), text)
@@ -39,7 +40,7 @@ export function mask(dir, secrets) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const names = ['COPILOT_GITHUB_TOKEN', ...String(process.env.HARNESS_MASK || '').split(',').map((s) => s.trim()).filter(Boolean)]
+  const names = ['COPILOT_GITHUB_TOKEN', ...String(process.env.HARNESS_MASK || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)]
   const n = mask(process.argv[2], names.map((k) => process.env[k]))
   console.log(`harness: masked ${names.join(', ')} in ${n} file${n === 1 ? '' : 's'}`)
 }

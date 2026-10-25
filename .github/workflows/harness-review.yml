@@ -65,8 +65,9 @@ jobs:
       - name: Prepare
         id: prepare
         env:
-          # The same identity ship publishes with, so both agree on which
-          # comments are the harness's own.
+          # The identity ship publishes with, so the ticket's hand-backs are
+          # recognised as the harness's own. (Review's publish posts as
+          # github.token, and finds its own comment by that login.)
           GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
         # Also skips a dispatched review of a pull request from a fork. The
         # number names the workspace path too: digits only.
@@ -230,7 +231,7 @@ jobs:
         id: collect
         if: always() && steps.stop.outputs.clean == 'true'
         # ADAPT: any other secret the build step was given (a package token)
-        # goes here too, and its name in HARNESS_MASK.
+        # goes here too, and its name in HARNESS_MASK (names separated by spaces or commas).
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           HARNESS_MASK: ""

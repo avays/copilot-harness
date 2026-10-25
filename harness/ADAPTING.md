@@ -320,7 +320,7 @@ their own config, so a failure here means you've changed the harness itself.
 ## 7. Prove it, cheapest first
 
 1. `node --test harness/test/*.test.mjs` — the harness's own tests, no network.
-2. `node harness/bin/doctor.mjs` — local readiness. Fix every ✗.
+2. `node harness/bin/doctor.mjs` — local readiness. Fix every ✗ except the labels, which the setup workflow creates in step 5.
 3. `node harness/bin/doctor.mjs --live` — Copilot loads the harness staged from **this working tree** and runs
    `harness-ping`, a workflow that starts **no agents and costs no credits**. That proves the CLI starts,
    signs in, finds the extension and reads the config. It makes no model call, so it does **not** prove
@@ -364,7 +364,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 183 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 188 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'

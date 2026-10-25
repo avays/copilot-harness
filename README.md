@@ -242,7 +242,7 @@ because everything is `.mjs` with no dependencies.
 | A private Maven repository | The build job needs its credential, and **the agents can read it** | Use a read-only package token; add it to the build step's env, `--preserve-env` and the artifact masking (ADAPTING §4) |
 | Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
-| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds, and merge harness PRs by squash or rebase in GitHub, which signs the result |
+| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds, and merge harness PRs by squash in GitHub, which signs the squashed commit (rebase-and-merge does not) |
 | A commit message convention | Agents are told to follow the project's convention (with a Conventional Commits fallback such as `docs(spec): …` if it states none) | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
@@ -484,7 +484,7 @@ measurement: no agent has run yet.
   - up to three skeptics for the minors on the final round.
 - **A full ticket:** at least seven (setup, spec writer, two spec auditors, implement, two code auditors),
   and twenty or more once revisions, fixes and skeptics come in.
-- **Reviews:** one to four lenses each.
+- **Reviews:** one lens (tiny or small) or three (large), plus any extra lenses you configure.
 
 The spec audit runs on the strong model on every tier, so it is the most expensive part of a small
 ticket, by design. Measure a few of your own tickets before setting `copilot.limits`. A guessed ceiling
@@ -517,7 +517,7 @@ Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The
 1.0.103, and `--experimental` is required.
 
 **Proven:**
-- **The loop logic:** 183 tests against a fake Copilot context and real git repositories.
+- **The loop logic:** 188 tests against a fake Copilot context and real git repositories.
 - **Loading and running headless:** Copilot CLI loads the staged harness headless and runs a workflow
   (`doctor --live`).
 - **The workflow files** pass actionlint.

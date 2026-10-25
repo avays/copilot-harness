@@ -203,13 +203,15 @@ export async function run(ctx, { config, deps = realDeps }) {
   ].filter((l) => T.specLenses.includes(l.key) || (l.tiers && l.tiers.includes(T.size)))
   if (!specLenses.length) return handBack('Spec Audit', `the ${T.size} tier names no spec lens that exists — check tiers.${T.size}.specLenses`)
   const specStuck = streaks()
+  let lastSpecOpen = []
   for (let round = 1; ; round++) {
     ctx.phase('Spec Audit')
     const res = await audit(specLenses, (l, retry) => ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.continuingAudit(a)}${P.specAuditAsk({ lensAsk: l.ask, specPath: spec.path })}`,
       { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || specSlot()) },
     ))
-    if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`)
+    // What the last round confirmed was revised but never audited again.
+    if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`, [], lastSpecOpen)
     const found = res.reports.flatMap(findingsOf)
     const open = await confirm(found.filter((f) => f.severity === 'blocker'), 'the spec', round)
     history.push(...open)
@@ -223,6 +225,7 @@ export async function run(ctx, { config, deps = realDeps }) {
       { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(specSlot()) },
     )
     if (!revised) return handBack('Spec Audit', 'the spec reviser did not finish', open)
+    lastSpecOpen = open
     // The revision's decisions are the ones the reviewer must answer.
     spec = state.spec = { ...spec, ...revised, path: spec.path }
   }
