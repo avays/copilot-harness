@@ -286,6 +286,9 @@ export async function workflowEdits(baseRef, ref, cwd) {
 // ── ship ─────────────────────────────────────────────────────────────────────
 async function shipPrepare(opt, root, config) {
   const L = config.github.labels
+  // Stamped before the issue is read: a comment posted from here on is
+  // either in this snapshot or after this claim, never in neither.
+  const claimed = new Date().toISOString()
   const t = await GH.issue(opt.n, root)
   const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
   if (t.state !== 'OPEN') return skip(`#${opt.n} is ${t.state.toLowerCase()} — nothing to do`)
@@ -309,7 +312,7 @@ async function shipPrepare(opt, root, config) {
   const { answer, skipped } = await GH.answerSince(t.comments, SHIP_MARKER, (login, c) => GH.writer(login, c, root), harnessLogin)
   if (skipped.length) console.error(`harness: ignored comments from ${skipped.join(', ')} — only people with write access answer a hand-back`)
   const notes = [opt.notes, answer].filter(Boolean).join('\n\n')
-  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes, size: opt.size, claimed: new Date().toISOString() }
+  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes, size: opt.size, claimed }
   writeHandoff(root, opt, 'prepare', state)
   output({ skip: 'false', branch, ref: onRemote ? branch : base })
   return state
@@ -365,6 +368,7 @@ export function missingBuild(env) {
   if (env.BUILD_ISOLATED === 'failure') return 'the build job could not isolate the agents (its "Isolate the agents" step failed closed), so no agent ran — its log says which check'
   // The Stop step fails the job when processes survive, so this is read
   // whatever the job's result.
+  if (env.BUILD_ISOLATED === 'success' && env.BUILD_CLEAN === 'true') return 'the build step failed before it wrote a result (a harness error, not the agents\' work) — its log says which'
   if (env.BUILD_ISOLATED === 'success' && env.BUILD_CLEAN !== 'true') return 'agent processes survived the end of the build, or the build stopped before them, so its outputs were not collected — its log says which'
   return 'the build job did not finish (a failed setup step, a timeout, a cancellation or a lost runner) — its log says which'
 }

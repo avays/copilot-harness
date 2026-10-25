@@ -78,7 +78,8 @@ export function implementAsk(config, specPath, carried, list) {
 
 export function fixAsk(config, specPath, open, list) {
   return `The spec is ${specPath}. These were independently confirmed against your branch:\n\n${list(open)}\n\n` +
-    `Fix each at its cause. Never edit an existing test to make it pass, and never disable or delete one. If a ` +
+    `Fix each at its cause. Never edit a test that exists on the base to make it pass, and never disable or ` +
+    `delete one. If a ` +
     `finding shows the spec was wrong, fix the spec too and say so in the summary.` +
     (config.commands.quick ? ` Run \`${config.commands.quick}\` after each edit;` : '') +
     ` do not run the full gate. Commit, and leave \`git status\` clean.`
@@ -146,8 +147,9 @@ export function skepticAsk({ f, where, base, specPath, list }) {
     `change it (a missing Done-when criterion is never "already on the base"), `
   const deliberate = where === 'the spec'
     ? `or if the project's instructions show it was deliberate.`
-    : `or if the instructions or the spec (${specPath}) *as first committed* show it was deliberate. A later ` +
-      `edit to the spec does not make a missed criterion deliberate.`
+    : `or if the instructions, the spec's *Decisions* (${specPath}), or a person's answer in the notes show it ` +
+      `was deliberate. An edit to the spec that only removes the criterion the finding is about does not ` +
+      `make it deliberate.`
   return `An auditor claims this ${f.severity === 'minor' ? 'minor problem' : 'blocker'} in ${where}. Try to ` +
     `REFUTE it. Open the cited file and line yourself. Refute if the line does not say what is claimed, ` +
     `${already}if it is style rather than a defect, if its fix would contradict the project's instructions, ` +

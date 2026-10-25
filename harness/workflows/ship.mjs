@@ -222,7 +222,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     ...config.lenses.code.map((l) => ({ ...l, ask: typeof l.ask === 'function' ? l.ask(BASE) : l.ask })),
   // An escalated small run gets every lens a full run would have had,
   // including the config's full-tier lenses.
-  ].filter((l) => t.codeLenses.includes(l.key) || (l.tiers && l.tiers.includes(t.escalated ? 'full' : t.size)))
+  ].filter((l) => t.codeLenses.includes(l.key) || (l.tiers && (l.tiers.includes(t.size) || (t.escalated && l.tiers.includes('full')))))
   let lenses = lensesFor(T)
   // No lens is no audit, and an audit nobody ran is not a clean one.
   if (!lenses.length) return handBack('Code Audit', `the ${T.size} tier names no code lens that exists — check tiers.${T.size}.codeLenses`)

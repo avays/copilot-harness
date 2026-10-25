@@ -583,3 +583,17 @@ test('a spec auditor on a continuing run is told to judge, not to build', async 
   assert.match(p, /Change nothing\./)
   assert.doesNotMatch(p, /Do not start over/)
 })
+
+test('an escalated run keeps the small tier\'s extra lenses too', async () => {
+  const cheap = { key: 'cheap', tiers: ['small'], ask: 'x' }
+  const ctx = fakeCtx(SHIP_ARGS, script())
+  await run(ctx, { config: config({ lenses: { code: [cheap], spec: [] } }), deps: deps({ facts: { files: 9, appLines: 400, risky: [], onlyDocs: false } }) })
+  assert.ok(ctx.calls.some((c) => c.label === 'audit:cheap#1'))
+})
+
+test('a spec lens runs on its own model slot', async () => {
+  const fit2 = { key: 'legacy', tiers: ['full'], ask: 'x', model: 'light' }
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
+  await run(ctx, { config: config({ lenses: { code: [], spec: [fit2] } }), deps: deps() })
+  assert.equal(ctx.calls.find((c) => c.label === 'spec-audit:legacy#1').opts.model, 'm-light')
+})

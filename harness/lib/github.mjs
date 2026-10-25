@@ -56,23 +56,33 @@ export const sameLogin = (a, b) => {
 }
 
 export function lastHandBack(comments, marker, harness) {
-  for (let i = comments.length - 1; i >= 0; i--) {
-    const c = comments[i], body = String(c.body || '')
-    if (!body.includes(marker) || (harness && !sameLogin(c.author && c.author.login, harness))) continue
+  // The thread: the hand-backs and declines between two pull requests — the
+  // latest such run of them. A later hand-back that asks nothing (an agent
+  // that crashed) must not hide the question, or the answer, before it; and
+  // the pull request that answered a thread must not hide it from its own
+  // review, so a thread with no hand-back after it is still the latest.
+  const mine = []
+  comments.forEach((c, i) => {
+    const body = String(c.body || '')
+    if (!body.includes(marker) || (harness && !sameLogin(c.author && c.author.login, harness))) return
     const tag = body.slice(body.indexOf(marker))
-    // An error or a pull request asks nobody anything: look further back.
-    const outcome = (/outcome=(\w+)/.exec(tag) || [])[1] || 'handback'
-    if (!['handback', 'declined'].includes(outcome)) continue
-    const claimed = (/claimed=([0-9T:.\-Z]+)/.exec(tag) || [])[1] || c.createdAt
-    const text = body.slice(0, body.indexOf(marker)).trim()
-    const after = comments.filter((x) => x !== c && (x.createdAt || '') > (claimed || '') && !String(x.body || '').includes(marker))
-    return { text, after }
+    mine.push({ i, c, outcome: (/outcome=(\w+)/.exec(tag) || [])[1] || 'handback',
+      claimed: (/claimed=([0-9T:.\-Z]+)/.exec(tag) || [])[1] || c.createdAt, text: body.slice(0, body.indexOf(marker)).trim() })
+  })
+  const segments = [[]]
+  for (const m of mine) {
+    if (m.outcome === 'pr') segments.push([])
+    else if (['handback', 'declined'].includes(m.outcome)) segments.at(-1).push(m)
   }
-  return null
+  const asked = [...segments].reverse().find((seg) => seg.length)
+  if (!asked) return null
+  const since = asked[0].claimed || ''
+  const after = comments.filter((x) => (x.createdAt || '') > since && !String(x.body || '').includes(marker))
+  return { text: asked.map((m) => m.text).join('\n\n---\n\n'), after }
 }
 
 /**
- * The answer to a hand-back: the hand-back itself, then what people with
+ * The answer to a hand-back: what the harness asked, then what people with
  * write access said since. It reaches the agents as part of their brief,
  * and anyone can comment on a public repository, so who may answer
  * matters: `canWrite(login)` decides, and the skipped authors are returned.

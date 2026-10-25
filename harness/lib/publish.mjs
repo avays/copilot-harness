@@ -31,8 +31,8 @@ function auditTable(r) {
 
 // What the run cost, as Copilot reported it. Every run says, so a team can
 // see what a ticket costs before it decides how many to give the harness.
-const spend = (u) => (u && u.aiCredits != null
-  ? ` ${u.aiCredits.toFixed(2)} AI credits across ${u.subagents} agent${u.subagents === 1 ? '' : 's'}, ${Math.round((u.elapsedMs || 0) / 60000)} min.`
+const spend = (u) => (u && Number.isFinite(Number(u.aiCredits)) && u.aiCredits !== null
+  ? ` ${Number(u.aiCredits).toFixed(2)} AI credits across ${num(u.subagents)} agent${Number(u.subagents) === 1 ? '' : 's'}, ${Math.round((Number(u.elapsedMs) || 0) / 60000)} min.`
   : '')
 
 export function shipTitle(r) {
@@ -50,7 +50,7 @@ export function shipPrBody(r) {
   }
   if (r.built) {
     if (r.built.tryIt) s.push(`## Try it\n\n${tame(r.built.tryIt)}`)
-    if (r.built.keyFiles && r.built.keyFiles.length) s.push(`## Start here\n\n${r.built.keyFiles.map((k) => `- \`${tame(k.file)}\` — ${tame(k.why)}`).join('\n')}`)
+    if (r.built.keyFiles && r.built.keyFiles.length) s.push(`## Start here\n\n${r.built.keyFiles.map((k) => `- ${code(k.file)} — ${tame(k.why)}`).join('\n')}`)
   }
   if (r.outcome === 'pr') {
     // Only audited rounds count as audit: a red gate or a conflict is the

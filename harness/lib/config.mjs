@@ -105,6 +105,11 @@ export function resolveConfig(user = {}) {
   for (const k of ['isTest', 'id']) if (typeof c.tests[k] !== 'function') problems.push(`tests.${k} must be a function of a file path`)
   for (const k of ['weakenedIfRemoved', 'weakenedIfAdded']) if (!(c.tests[k] instanceof RegExp)) problems.push(`tests.${k} must be a regular expression`)
   for (const k of ['code', 'spec']) if (!Array.isArray(c.lenses[k])) problems.push(`lenses.${k} must be a list of lenses`)
+  else if (c.lenses[k].some((l) => !l || typeof l !== 'object')) problems.push(`every entry of lenses.${k} must be a lens object`)
+  if (!Array.isArray(c.instructions)) problems.push('instructions must be a list of files or folders')
+  if (!Array.isArray(c.commands.reports)) problems.push('commands.reports must be a list of folders')
+  // A /g or /y regex keeps its position between .test() calls and skips matches.
+  for (const k of ['weakenedIfRemoved', 'weakenedIfAdded']) if (c.tests[k] instanceof RegExp && (c.tests[k].global || c.tests[k].sticky)) problems.push(`tests.${k} must not use the g or y flag`)
   if (problems.length) throw new Error(`harness.config.mjs: ${problems.join('; ')}`)
   for (const t of Object.values(c.tiers)) {
     for (const k of ['think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)

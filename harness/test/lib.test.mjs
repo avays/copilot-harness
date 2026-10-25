@@ -484,4 +484,64 @@ test('publish says why there is no build result', async () => {
   assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'failure', BUILD_CLEAN: '' }), /survived the end of the build/)
   // A setup step that failed before Isolate is not an isolation failure.
   assert.match(missingBuild({ BUILD_ISOLATED: 'skipped', BUILD_RESULT: 'failure' }), /did not finish \(a failed setup step/)
+  assert.match(missingBuild({ BUILD_ISOLATED: 'success', BUILD_RESULT: 'failure', BUILD_CLEAN: 'true' }), /build step failed before it wrote a result/)
+})
+
+test('an answer survives a later hand-back that asks nothing', async () => {
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  const c = (login, body, createdAt) => ({ author: { login }, body, createdAt })
+  const q1 = c('bot', `404 or 410?\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T10:00:00Z -->`, '2026-10-01T10:30:00Z')
+  const ans = c('ana', 'use 410', '2026-10-01T11:00:00Z')
+  const stalled = c('bot', `the setup agent did not finish\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-01T12:00:00Z -->`, '2026-10-01T12:30:00Z')
+  const r = await answerSince([q1, ans, stalled], SHIP_MARKER, async () => true, 'bot')
+  assert.match(r.answer, /404 or 410\?[\s\S]*setup agent did not finish[\s\S]*The answer:\nuse 410/)
+  // A new thread after a pull request replaces the old one.
+  const pr = c('bot', `ready\n\n${SHIP_MARKER} outcome=pr claimed=2026-10-01T13:00:00Z -->`, '2026-10-01T13:30:00Z')
+  const q2 = c('bot', `now the log format?\n\n${SHIP_MARKER} outcome=handback claimed=2026-10-02T10:00:00Z -->`, '2026-10-02T10:30:00Z')
+  const ans2 = c('ana', 'JSON', '2026-10-02T11:00:00Z')
+  const r2 = await answerSince([q1, ans, stalled, pr, q2, ans2], SHIP_MARKER, async () => true, 'bot')
+  assert.match(r2.answer, /now the log format\?[\s\S]*The answer:\nJSON$/)
+  assert.doesNotMatch(r2.answer, /404 or 410/)
+})
+
+test('a decline is marked as one, and its answer counts', async () => {
+  const { answerSince } = await import('../lib/github.mjs')
+  const { SHIP_MARKER } = await import('../lib/publish.mjs')
+  const body = shipIssueComment({ outcome: 'declined', reason: 'asks for two things' }, '', '2026-10-01T10:00:00Z')
+  assert.match(body, /outcome=declined/)
+  const r = await answerSince([{ author: { login: 'bot' }, body, createdAt: '2026-10-01T10:30:00Z' }, { author: { login: 'ana' }, body: 'just the first', createdAt: '2026-10-01T11:00:00Z' }], SHIP_MARKER, async () => true, 'bot')
+  assert.match(r.answer, /just the first/)
+})
+
+test('without the API\'s answer only the owner may answer a hand-back', async () => {
+  const { writer } = await import('../lib/github.mjs')
+  const { mkdtempSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  // No repository here, so the API call fails and the fallback decides.
+  const cwd = mkdtempSync(join(tmpdir(), 'no-repo-'))
+  const saved = process.env.GH_REPO
+  process.env.GH_REPO = 'nobody/does-not-exist-harness-test'
+  try {
+    assert.equal(await writer('x', { authorAssociation: 'MEMBER' }, cwd), false)
+    assert.equal(await writer('x', { authorAssociation: 'COLLABORATOR' }, cwd), false)
+    assert.equal(await writer('x', { authorAssociation: 'OWNER' }, cwd), true)
+  } finally { if (saved === undefined) delete process.env.GH_REPO; else process.env.GH_REPO = saved }
+})
+
+test('the config refuses string lists, global regexes and null lenses', () => {
+  assert.throws(() => config({ instructions: 'AGENTS.md' }), /instructions must be a list/)
+  assert.throws(() => config({ commands: { gate: [{ name: 't', run: 'true' }], reports: 'target/surefire-reports' } }), /reports must be a list/)
+  assert.throws(() => config({ tests: { weakenedIfRemoved: /@Test/g } }), /must not use the g or y flag/)
+  assert.throws(() => config({ lenses: { code: [null], spec: [] } }), /must be a lens object/)
+  assert.throws(() => config({ lenses: { code: [], spec: [{ key: 'p', ask: 'x', tiers: ['full'], model: 'huge' }] } }), /names model "huge"/)
+})
+
+test('a key file that tries to leave its code span stays inside it, and odd spend is not a crash', () => {
+  const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [],
+    built: { keyFiles: [{ file: 'a`b\n\nc', why: 'w' }] }, usage: { aiCredits: 'lots', subagents: 'many' } })
+  assert.match(body, /- `a'b c` — w/)
+  const odd = shipPrBody({ outcome: 'handback', issue: 7, reason: 'r', phase: 'p', open: [blocker({ file: 'x\n\ny' })], rounds: [], specRounds: [] })
+  assert.match(odd, /`x y:40`/)
 })

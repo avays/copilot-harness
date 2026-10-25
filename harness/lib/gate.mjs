@@ -83,7 +83,7 @@ export const gateLine = (g) =>
 
 /** A red gate → findings a fixer can aim at. None means nothing to aim at. */
 export function gateFindings(g) {
-  const fix = 'make the gate green without editing, disabling or deleting an existing test'
+  const fix = 'make the gate green without editing, disabling or deleting a test that exists on the base'
   if (g.failedTests.length) {
     return g.failedTests.slice(0, 10).map((t) => ({
       severity: 'blocker', category: 'gate', file: t.test, claim: `gate red: ${t.test}`, evidence: t.error, fix,
