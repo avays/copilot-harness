@@ -18,6 +18,8 @@ export function mask(dir, secrets) {
   // read to check is removed: nothing unchecked is uploaded.
   // Paths as bytes throughout, so a name that isn't valid UTF-8 still
   // resolves to the file it names.
+  // Built the way walk builds paths, so only <dir>/handoff itself matches.
+  const handoff = Buffer.concat([Buffer.from(dir), Buffer.from('/handoff')])
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true, encoding: 'buffer' })) {
       const p = Buffer.concat([d, Buffer.from('/'), e.name])
@@ -27,7 +29,7 @@ export function mask(dir, secrets) {
       if (!e.isFile()) continue
       // The hand-off bundle is compressed, and the workflow scans its commits
       // instead; any other file named .bundle is masked like the rest.
-      if (/^ship-\d+\.bundle$/.test(e.name.toString()) && d.toString().endsWith('/handoff')) continue
+      if (/^ship-\d+\.bundle$/.test(e.name.toString()) && d.equals(handoff)) continue
       try {
         const text = readFileSync(p, 'latin1')
         const masked = list.reduce((t, s) => t.split(s).join('***'), text)

@@ -438,11 +438,11 @@ async function shipBuild(opt, root, config, state) {
 /** Issue references a merge would close, other than the ticket's own, in commit messages. */
 export function closingKeywords(log, own, repo = null) {
   const found = new Set()
-  for (const m of String(log).matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*((?:[\w.-]+\/[\w.-]+)?#\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+)/gi)) {
+  for (const m of String(log).matchAll(/(?<![A-Za-z0-9])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[*_~\s]*:?[*_~\s]*((?:[\w.-]+\/[\w.-]+)?#\d+|gh-\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+)/gi)) {
     // The ticket's own number is meant to close: as #N, or as this
     // repository's owner/repo#N or issue URL — not another repository's.
     const ref = m[1]
-    const bare = /^#(\d+)$/.exec(ref)
+    const bare = /^(?:#|gh-)(\d+)$/i.exec(ref)
     const slug = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(ref)
     const url = /github\.com\/([\w.-]+\/[\w.-]+)\/(?:issues|pull)\/(\d+)$/.exec(ref)
     const mine = (bare && Number(bare[1]) === Number(own)) ||

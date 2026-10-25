@@ -16,25 +16,43 @@ export function git(args, { cwd, signal } = {}) {
 function run(bin, args, { cwd, env, signal, timeoutMs }) {
   return new Promise((resolveRun) => {
     const out = []
-    const p = spawn(bin, args, { cwd, env: { ...process.env, ...env }, signal, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = '', stderr = '', settled = false
+    const finish = (r) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', stop)
+      resolveRun(r)
+    }
+    const p = spawn(bin, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
     // Killing bash leaves Maven's forked JVMs holding the pipes open, so
-    // `close` would never come: once stopped, stop waiting for the output,
-    // and a JVM still writing to it gets EPIPE and dies.
+    // `close` would never come: once stopped, wait for the process itself,
+    // not its output, and a JVM still writing to it gets EPIPE and dies.
+    // An abort is handled the same way, not by spawn's own signal, which
+    // settles at once and leaves the command running in its folder.
     let stopped = false
-    const stop = () => { stopped = true; p.kill('SIGTERM'); setTimeout(() => p.kill('SIGKILL'), 5000).unref() }
+    function stop() {
+      if (stopped) return
+      stopped = true
+      p.kill('SIGTERM')
+      setTimeout(() => p.kill('SIGKILL'), 5000).unref()
+    }
     const timer = timeoutMs ? setTimeout(stop, timeoutMs) : null
-    const onAbort = () => { stopped = true }
-    if (signal) signal.addEventListener('abort', onAbort, { once: true })
-    const done = () => { if (signal) signal.removeEventListener('abort', onAbort) }
-    p.on('close', done); p.on('error', done)
-    p.on('exit', (code) => { if (stopped) { p.stdout.destroy(); p.stderr.destroy(); if (timer) clearTimeout(timer); resolveRun({ code: code ?? 1, stdout, stderr, out: out.join('') }) } })
-    let stdout = '', stderr = ''
+    if (signal) {
+      if (signal.aborted) stop()
+      else signal.addEventListener('abort', stop, { once: true })
+    }
     // Decoded as a stream, so a character split across chunks stays whole.
     p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8')
     p.stdout.on('data', (d) => { stdout += d; out.push(d) })
     p.stderr.on('data', (d) => { stderr += d; out.push(d) })
-    p.on('error', (e) => { if (timer) clearTimeout(timer); resolveRun({ code: 127, stdout, stderr: stderr + String(e.message), out: out.join('') + String(e.message) }) })
-    p.on('close', (code) => { if (timer) clearTimeout(timer); resolveRun({ code: code ?? 1, stdout, stderr, out: out.join('') }) })
+    p.on('exit', (code) => {
+      if (!stopped) return
+      p.stdout.destroy(); p.stderr.destroy()
+      finish({ code: code ?? 1, stdout, stderr, out: out.join('') })
+    })
+    p.on('error', (e) => finish({ code: 127, stdout, stderr: stderr + String(e.message), out: out.join('') + String(e.message) }))
+    p.on('close', (code) => finish({ code: code ?? 1, stdout, stderr, out: out.join('') }))
   })
 }
 

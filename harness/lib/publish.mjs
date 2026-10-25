@@ -10,13 +10,15 @@ const ZWJ = '\u200d'
 // Everything is tamed, code spans too: matching GitHub's own idea of where
 // a code span starts and ends is fragile, and a joiner inside code is
 // harmless. File paths go through code() instead, untouched.
-// Only a letter or digit before the word or the @ keeps it live text: GitHub
-// still links `_@x_`, `.@x` and `_fixes #1_`, but not an e-mail address.
-const CLOSING = /(?<![A-Za-z0-9])(close[sd]?|fix(?:e[sd])?|resolve[sd]?)((?:\s|<[^>]*>)*:?(?:\s|<[^>]*>)*)(?=(?:[\w.-]+\/[\w.-]+)?#\d|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/gi
+// Every closing keyword gets the joiner, whatever follows it: GitHub closes
+// on `gh-12`, `**#12**` and more forms than a list of them would keep up
+// with, and the joiner is invisible. Only a letter or digit either side
+// keeps it a different word (`prefix`, `fixture`); likewise only a letter
+// or digit before an @ (an e-mail address) keeps it live.
+const CLOSING = /(?<![A-Za-z0-9])(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?![A-Za-z0-9])()/gi
 const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![A-Za-z0-9])@(?=[\w-])/g, `@${ZWJ}`)
 // An entity first: GitHub decodes `&#64;x` before it looks for mentions.
-// Tags between a keyword and its `#` are caught by CLOSING above. `<!--`
-// last: agent text must not open a hidden comment, or carry a marker.
+// `<!--` last: agent text must not open a hidden comment, or carry a marker.
 export const tame = (t) => inert(String(t ?? '').replace(/&(?=#|[A-Za-z])/g, '&amp;')).replace(/<!--/g, '&lt;!--')
 // A count from the build's report, printed only as a number.
 // A link target that nothing can break out of: every segment encoded,

@@ -818,3 +818,41 @@ test('a passing test that prints error-like XML is not a failure', () => {
 </testsuite>`
   assert.deepEqual(failedTestsIn(xml).map((f) => f.test), ['T#c', 'T#d'])
 })
+
+test('every closing keyword is tamed, and the commit check sees gh-N and emphasis', async () => {
+  const { tame } = await import('../lib/publish.mjs')
+  const { closingKeywords } = await import('../bin/run.mjs')
+  for (const s of ['Fixes gh-12', 'Closes **#12**', '**Fixes** #12', 'Fixes _#12_', 'resolved: o/r#3']) assert.match(tame(s), /‍/, s)
+  assert.equal(tame('a prefix fixture is closeable'), 'a prefix fixture is closeable')
+  assert.deepEqual(closingKeywords('Fixes gh-12\n\nCloses **#13**\n**Fixes** _#14_\nfixes GH-5', 5), ['gh-12', '#13', '#14'])
+})
+
+test('mask exempts only the hand-off bundle at the top of the folder', async () => {
+  const { mask } = await import('../bin/mask.mjs')
+  const { mkdtempSync, mkdirSync, readFileSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const d = mkdtempSync(join(tmpdir(), 'mask-handoff-'))
+  mkdirSync(join(d, 'handoff')); mkdirSync(join(d, 'runs/x/handoff'), { recursive: true })
+  writeFileSync(join(d, 'handoff/ship-7.bundle'), 'SECRETTOKEN123')
+  writeFileSync(join(d, 'runs/x/handoff/ship-7.bundle'), 'SECRETTOKEN123')
+  mask(d, ['SECRETTOKEN123'])
+  assert.equal(readFileSync(join(d, 'handoff/ship-7.bundle'), 'utf8'), 'SECRETTOKEN123')
+  assert.equal(readFileSync(join(d, 'runs/x/handoff/ship-7.bundle'), 'utf8'), '***')
+})
+
+test('an aborted command is stopped and waited for, not left running', async () => {
+  const { sh } = await import('../lib/exec.mjs')
+  const { existsSync, mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const d = mkdtempSync(join(tmpdir(), 'abort-'))
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 200)
+  const r = await sh('sleep 2 && echo late > late.txt', { cwd: d, signal: ac.signal })
+  assert.notEqual(r.code, 0)
+  await new Promise((res) => setTimeout(res, 2500))
+  assert.equal(existsSync(join(d, 'late.txt')), false)
+  const pre = new AbortController(); pre.abort()
+  assert.notEqual((await sh('sleep 1', { signal: pre.signal })).code, 0)
+})
