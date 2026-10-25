@@ -16,7 +16,8 @@ export function failedTestsIn(xml) {
   // What the tests printed is not the verdict: a passing test may log
   // `<error code=…>` or even JUnit XML, and Surefire writes system-out for
   // passing tests, Gradle for whole suites. Dropped from the whole report.
-  xml = xml.replace(/<(system-out|system-err)\b(?:[^>]*\/>|[\s\S]*?(?:<\/\1>|$))/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+  // CDATA first: text inside it may itself mention <system-out>.
+  xml = xml.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '').replace(/<(system-out|system-err)\b(?:[^>]*\/>|[\s\S]*?(?:<\/\1>|$))/g, '')
   for (const m of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
     const body = m[2] || ''
     const f = /<(failure|error)(?=[\s>\/])([^>]*)>?([\s\S]*?)(?:<\/\1>|$)/.exec(body)
@@ -55,15 +56,17 @@ function reportDirs(cwd, configured) {
   return [...new Set(dirs)]
 }
 
-/**
- * Run every gate command in order. Green only if every one exits 0 and the
- * tree is clean afterwards: green on uncommitted changes is green on code the
- * pull request will not contain.
- */
 /** Failing tests in the reports written under `cwd` since `since`. */
 export const failedSince = (cwd, config, since) => reportDirs(cwd, config.commands.reports)
   .flatMap((d) => reportFiles(d, since))
   .flatMap((f) => failedTestsIn(readFileSync(f, 'utf8')))
+
+/**
+ * Run every gate command in order. Green only if every one exits 0, no report
+ * written during the run records a failing test, and the tree is clean
+ * afterwards: green on uncommitted changes is green on code the pull request
+ * will not contain.
+ */
 
 export async function gate({ config, cwd, base, signal }) {
   const started = Date.now()

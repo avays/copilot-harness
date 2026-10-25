@@ -607,7 +607,7 @@ test('closing keywords in commit messages are found, the ticket\'s own excepted,
   assert.deepEqual(closingKeywords(log, 7).sort(), ['#123', 'https://github.com/o/r/issues/4', 'o/r#9'].sort())
   assert.deepEqual(closingKeywords('chore: tidy\n', 7), [])
   const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [], closingCommits: ['#123'] })
-  assert.match(body, /\[!WARNING\][\s\S]*would close #‍?123 on merge/)
+  assert.match(body, /\[!WARNING\][\s\S]*would close\u200d #123 on merge/)
 })
 
 test('mask gets past a file name that is not UTF-8, and still masks the rest', async () => {
@@ -892,4 +892,20 @@ test('an abort during the drain does not mark a finished command stopped', async
   const r = await sh('sleep 4 & exit 0', { signal: ac.signal })
   assert.equal(r.code, 0)
   assert.equal(r.stopped, false)
+})
+
+test('the PR body\'s own wording cannot close anything but its ticket', async () => {
+  const { closingKeywords } = await import('../bin/run.mjs')
+  const f = { severity: 'blocker', category: 'logic', file: 'fixes/A.java', claim: 'c', fix: '#5' }
+  const body = shipPrBody({ outcome: 'handback', reason: 'r', phase: 'Code Audit', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [], open: [f], alsoOpen: [f], closingCommits: ['#99'] })
+  assert.deepEqual(closingKeywords(body, 7), [])
+  const pr = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [] })
+  assert.match(pr, /^Closes #7\./)
+})
+
+test('CDATA that mentions system-out neither invents nor hides a failure', () => {
+  const ghost = '<testcase classname="C" name="emits"><system-out><![CDATA[<system-out>log</system-out><testcase name="g"><failure message="x"/></testcase>]]></system-out></testcase>'
+  assert.deepEqual(failedTestsIn(ghost), [])
+  const real = '<testcase classname="C" name="r"><failure message="boom"><![CDATA[expected <system-out> to be empty]]></failure></testcase>'
+  assert.deepEqual(failedTestsIn(real).map((f) => f.test), ['C#r'])
 })

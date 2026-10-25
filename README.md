@@ -222,7 +222,7 @@ Everything the harness needs lives in a few new paths. Nothing existing is repla
 | --- | --- | --- |
 | `harness/` | repository root | the harness code, its tests and `harness/ADAPTING.md` |
 | `harness.config.mjs` | repository root | **the one file the team edits** |
-| `.github/extensions/harness/` | as is | Copilot discovers the extension here; the folder name must stay `harness` |
+| `.github/extensions/harness/` | as is | The extension; `run.mjs` stages it into a temporary Copilot home, so the folder name must stay `harness` |
 | `.github/workflows/harness-ship.yml`, `harness-review.yml`, `harness-setup.yml` | as is | prefixed, so they don't collide with existing workflows |
 | `.harness/` | in `.gitignore` | the harness's local run folders and worktrees |
 
@@ -242,7 +242,7 @@ because everything is `.mjs` with no dependencies.
 | A private Maven repository | The build job needs its credential, and **the agents can read it** | Use a read-only package token; add it to the build step's env, `--preserve-env` and the artifact masking (ADAPTING §4) |
 | Existing CI workflows | Untouched. But pull requests opened with the default `GITHUB_TOKEN` **don't trigger other workflows**, so the team's CI won't run on harness PRs by itself | Either add a `HARNESS_GH_TOKEN` PAT (CI then runs agent-written code with the CI's secrets), or have a person push a commit (or close and reopen the PR, which also starts the harness review again) on each harness PR: no run exists to re-run. Decide this up front |
 | Branch protection with required checks | Harness PRs need those checks too, and they only report if CI runs (row above) | Make the project's CI the required check; never make the harness review required |
-| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit: `git switch harness/<n>-<slug> && git fetch origin && git merge origin/<base>` first (the base has usually moved since the harness last merged it; resolve and run the gate), then `git reset --soft origin/<base> && git commit -S` and `git push --force-with-lease`. Or the mergers are given a bypass for the rule |
+| Required signed commits | Harness commits are **unsigned** (`harness[bot]`): a rule on every branch rejects the harness's push; a rule on the base blocks a plain merge | Leave `harness/*` out of the rule so the push succeeds. GitHub blocks even a squash merge of unsigned commits, so before merging, a person squashes the branch into one signed commit: `git fetch origin`, `git switch -C harness/<n>-<slug> origin/harness/<n>-<slug>` (the pushed branch, not a local run's), `git merge origin/<base>` (resolve, run the gate), `git reset --soft origin/<base> && git commit -S`, then `git push --force-with-lease=harness/<n>-<slug>:origin/harness/<n>-<slug> origin HEAD:harness/<n>-<slug>`. Or the mergers are given a bypass for the rule |
 | A commit message convention | Agents are told to follow the project's convention (with a Conventional Commits fallback such as `docs(spec): …` if it states none) | Make sure the convention is written in the instruction files |
 | A PR title or branch naming rule | Harness branches are `harness/<issue>-<slug>`; PR titles are `<issue title> (#<n>)` | Allow these, or change `shipTitle` in `harness/lib/publish.mjs` |
 | An existing `specs/` or ADR folder | Specs go to `paths.specs` (default `specs`) | Point it at the team's folder, or keep `specs/` for harness specs only |
@@ -517,7 +517,7 @@ Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The
 1.0.103, and `--experimental` is required.
 
 **Proven:**
-- **The loop logic:** 201 tests against a fake Copilot context and real git repositories.
+- **The loop logic:** 203 tests against a fake Copilot context and real git repositories.
 - **Loading and running headless:** Copilot CLI loads the staged harness headless and runs a workflow
   (`doctor --live`).
 - **The workflow files** pass actionlint.

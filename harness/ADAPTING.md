@@ -36,7 +36,7 @@ From this repository into the project's:
 | --- | --- |
 | `harness/` | All of it: `harness/test/` lets you check your changes to the harness, and this guide (`harness/ADAPTING.md`) is what the copied files' comments point to |
 | `harness.config.mjs` | To the repository root |
-| `.github/extensions/harness/` | Copilot discovers the extension here. The folder name must stay `harness` |
+| `.github/extensions/harness/` | The extension's source. `run.mjs` stages it into a temporary Copilot home as a user extension (Copilot never loads the workspace copy), and finds it by this name: the folder must stay `harness` |
 | `.github/workflows/harness-ship.yml`, `harness-review.yml`, `harness-setup.yml` | The names are prefixed, so they won't collide with the project's own |
 
 **Don't copy** the root `README.md`, `AGENTS.md` or `package.json`. They describe this boilerplate, and
@@ -365,7 +365,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 201 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 203 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -401,7 +401,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   settings for a run in it (`copilot config --repo` lists them, including `model` and `effortLevel`).
   Plugins, hooks and MCP servers there are gated on folder trust, which the staged home never grants;
   whether `model` and `effortLevel` are too isn't proved. Set every `models` slot to an id, so the harness
-  passes `--model` itself, and check the first real run's agents used the models you set.
+  passes each agent its model itself, and check the first real run's agents used the models you set.
 - **Repository hooks in the workspace** (`.github/hooks/*.json`). Copilot gates them on folder trust as it
   does extensions, and the staged home trusts no folder, but whether one fires in a headless agent
   session hasn't been observed: `ping` starts no agent. The first real run will show it.

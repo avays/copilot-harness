@@ -40,9 +40,20 @@ export async function redCheck({ config, cwd, base, signal }) {
   try {
     const add = await git(['worktree', 'add', '--detach', dir, 'HEAD'], { cwd })
     if (add.code !== 0) return { checked: false, reason: `could not make a worktree: ${tail(add.out, 3)}` }
-    if (p.code.length) await git(['checkout', base, '--', ...p.code], { cwd: dir })
+    // A revert that failed would test the branch's own code and call good
+    // tests worthless: say the check did not run instead.
+    const revert = async (files) => {
+      const r = await git(['checkout', base, '--', ...files], { cwd: dir })
+      return r.code === 0 ? null : { checked: false, reason: `could not revert to ${base}: ${tail(r.out, 3)}` }
+    }
+    const failed = p.code.length ? await revert(p.code) : null
+    if (failed) return failed
     for (const f of p.added) rmSync(join(dir, f), { force: true })
-    for (const r of p.renamed) { rmSync(join(dir, r.to), { force: true }); await git(['checkout', base, '--', r.from], { cwd: dir }) }
+    for (const r of p.renamed) {
+      rmSync(join(dir, r.to), { force: true })
+      const bad = await revert([r.from])
+      if (bad) return bad
+    }
     const cmd = config.commands.testsOnly.replace('{tests}', p.tests.join(','))
     const started = Date.now()
     const r = await sh(cmd, { cwd: dir, signal })

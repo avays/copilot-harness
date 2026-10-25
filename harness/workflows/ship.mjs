@@ -160,9 +160,8 @@ export async function run(ctx, { config, deps = realDeps }) {
         `${COMMON}\n\n${ticket}\n\n${P.skepticAsk({ f, where: what, base: BASE, specPath: spec.path, list: listFindings })}`,
         // The spec loop's skeptic runs on the spec slot, like the rest of that loop.
         { label: `skeptic:${what === 'the spec' ? 'spec' : 'code'}:${i}#${round}`, schema: REFUTATION, model: m(what === 'the spec' ? specSlot() : T.think) },
-      // A skeptic that died refuted nothing: dropping its finding would let
-      // a crash read as a clean audit.
-      // A skeptic that throws refuted nothing either.
+      // A skeptic that died or threw refuted nothing: dropping its finding
+      // would let a crash read as a clean audit.
       ).then((v) => (v && v.refuted ? null : f), () => f)))
     return judged.filter((f) => f !== null)
   }
@@ -293,12 +292,11 @@ export async function run(ctx, { config, deps = realDeps }) {
       // Would the new tests fail without the change? A command answers it.
       lastRed = await deps.redCheck({ config, cwd, base: BASE, signal: ctx.signal })
       const res = await audit(lenses, (l, retry) => ctx.agent(
-        `${COMMON}\n\n${ticket}\n\n${P.auditAsk({ lensAsk: l.ask, specPath: spec.path, gateLine: gateLine(gate), sha: gate.sha, tampered: gate.tampered, list: listFindings })}`,
+        `${COMMON}\n\n${ticket}\n\n${P.continuingAudit(a)}${P.auditAsk({ lensAsk: l.ask, specPath: spec.path, gateLine: gateLine(gate), sha: gate.sha, tampered: gate.tampered, list: listFindings })}`,
         { label: `audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.think) },
       ))
-      // What the last round confirmed was fixed but never re-audited.
-      // A red gate's or a conflict's findings are resolved: this round's gate is green.
-      // What the last audit confirmed was fixed but never audited again.
+      // What the last audit confirmed was fixed but never audited again. A
+      // red gate's or a conflict's findings are resolved: this gate is green.
       if (res.missing.length) return handBack('Code Audit', `the ${res.missing.join(', ')} auditor could not finish`, [], lastAudit)
       const raised = [...res.reports.flatMap(findingsOf), ...redCheckFinding(lastRed, BASE)]
       minors = raised.filter((f) => f.severity === 'minor')

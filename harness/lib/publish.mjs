@@ -15,7 +15,7 @@ const ZWJ = '\u200d'
 // with, and the joiner is invisible. Only a letter or digit either side
 // keeps it a different word (`prefix`, `fixture`); likewise only a letter
 // or digit before an @ (an e-mail address) keeps it live.
-const CLOSING = /(?<![A-Za-z0-9])(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?![A-Za-z0-9])()/gi
+const CLOSING = /(?<![A-Za-z0-9])(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?![A-Za-z0-9\u200d])()/gi
 const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![A-Za-z0-9])@(?=[\w-])/g, `@${ZWJ}`)
 // An entity first: GitHub decodes `&#64;x` before it looks for mentions.
 // `<!--` last: agent text must not open a hidden comment, or carry a marker.
@@ -87,7 +87,12 @@ export function shipPrBody(r) {
   const table = auditTable(r)
   if (table) s.push(`<details><summary>Every audit round</summary>\n\n${table}\n\n</details>`)
   s.push(`<sub>Sized **${tame(r.size || '?')}** — ${tame(r.why)}.${spend(r.usage)} Built by the Copilot harness (harness/workflows/ship.mjs).</sub>`)
-  return s.join('\n\n')
+  // The body's own wording sits next to agent text too ("would close" before
+  // a ref, "Fix:" before an agent's `#5`), so every keyword after the first
+  // line gets the joiner, outside code spans (tamed already, and never
+  // linked) and link targets (a joiner would break the URL).
+  const [head, ...rest] = s
+  return [head, ...rest.map((x) => x.split(/(`[^`\n]*`|\]\([^)\s]*\))/).map((p, i) => (i % 2 ? p : p.replace(CLOSING, `$1${ZWJ}`))).join(''))].join('\n\n')
 }
 
 // Marks the harness's own comments on an issue: the next run reads the
