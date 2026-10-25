@@ -322,6 +322,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   rules match on the first subcommand, so a git alias might get round `shell(git push)`. The harness
   doesn't rely on the deny list (see *Isolation* below). Check that an agent *can* run `./mvnw` and
   `git commit` in the workspace, and that nothing it needs is denied.
+- **Repository hooks in the workspace** (`.github/hooks/*.json`). Copilot gates them on folder trust as it
+  does extensions, and the staged home trusts no folder, but whether one fires in a headless agent
+  session hasn't been observed: `ping` starts no agent. The first real run will show it.
 - **Turning sudo off on the runner image.** The build job's step removes the sudoers entries and fails
   the job if `sudo -n true` still works. If a runner image keeps sudo some other way, that step fails
   closed: adapt it rather than delete it.
@@ -342,7 +345,8 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   trusted folder removed. A folder you once trusted interactively therefore stays untrusted here (shown
   live on CLI 1.0.103: with your trust linked in, the workspace's extension loaded; staged, it did not).
   So agents' edits to `harness/` or `harness.config.mjs` on a branch can't change the loop, the limits
-  or the gate of a later run.
+  or the gate of a later run. The staged home also keeps the run's own sessions, logs and settings, so a run
+  leaves nothing in your `~/.copilot` (it used to switch experimental mode on there).
 - **In Actions, the build job** uses its read-only token only for the checkout and setup actions. From the
   agents' step on, no step has a GitHub token in its environment, and the checkouts keep no credentials.
   Before the agents start, sudo and Docker are switched off, and the step fails if either still works

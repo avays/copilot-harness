@@ -146,10 +146,15 @@ async function must(args, cwd, what) {
  * project extension is never loaded: headless, Copilot loads project
  * extensions only with an opt-in that copilotEnv removes.
  *
- * The person's own Copilot home is linked in, minus its extensions, so a
- * `copilot login` still signs the run in.
+ * The person's own Copilot home is linked in, so a `copilot login` still
+ * signs the run in — minus their extensions, their folder trust (config and
+ * settings are trust-stripped copies, so nothing the run writes there
+ * reaches them) and their session state and logs.
  */
 const TRUST_FILES = new Set(['config.json', 'settings.json'])
+// What a run writes. Linked, a run would put its sessions and logs in the
+// person's own history; it gets its own instead.
+const RUN_STATE = /^(session-state|logs|history|.*\.lock)$/
 
 /** A Copilot config without folder trust. Unreadable JSON becomes {}: trust nothing. */
 export function untrusted(text) {
@@ -173,7 +178,7 @@ export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedi
   // interactive Copilot would load the workspace's own project extension.
   if (existsSync(own)) {
     for (const entry of readdirSync(own)) {
-      if (entry === 'extensions') continue
+      if (entry === 'extensions' || RUN_STATE.test(entry)) continue
       if (TRUST_FILES.has(entry)) writeFileSync(join(home, entry), untrusted(readFileSync(join(own, entry), 'utf8')))
       else symlinkSync(join(own, entry), join(home, entry))
     }

@@ -121,7 +121,8 @@ jobs:
           sudo sh -c 'rm -f /etc/sudoers.d/*'
           for g in sudo admin wheel; do sudo gpasswd -d "$USER" "$g" >/dev/null 2>&1 || true; done
           sudo -k
-          if sudo -n true 2>/dev/null; then echo "::error::sudo is still available; the build job must not have it"; exit 1; fi
+          # -n: no cached ticket; -S with no input: no password either.
+          if sudo -n true 2>/dev/null || sudo -S -k true </dev/null 2>/dev/null; then echo "::error::sudo is still available; the build job must not have it"; exit 1; fi
           if docker info >/dev/null 2>&1; then echo "::error::Docker is still reachable; the build job must not have it"; exit 1; fi
           # Before any agent runs, so they cannot change it: the reap below
           # stops every process of this user started after this moment.

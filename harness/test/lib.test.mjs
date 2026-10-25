@@ -199,6 +199,8 @@ test('the staged harness is the root\'s, as a user extension, with the person\'s
   writeFileSync(join(own, 'config.json'), '{}')
   writeFileSync(join(own, 'session-store.db'), '')
   mkdirSync(join(own, 'extensions', 'something-else'), { recursive: true })
+  mkdirSync(join(own, 'session-state'), { recursive: true }); mkdirSync(join(own, 'logs'), { recursive: true })
+  writeFileSync(join(own, 'settings.json.lock'), '')
   const root = resolve(import.meta.dirname, '../..')
   const { home, cleanup } = stageHarness(root, own)
   try {
@@ -211,6 +213,7 @@ test('the staged harness is the root\'s, as a user extension, with the person\'s
     assert.ok(lstatSync(join(home, 'session-store.db')).isSymbolicLink())
     assert.ok(!lstatSync(join(home, 'config.json')).isSymbolicLink())
     assert.ok(!existsSync(join(home, 'extensions', 'something-else')), 'the person\'s own extensions are not loaded')
+    for (const own of ['session-state', 'logs', 'settings.json.lock']) assert.ok(!existsSync(join(home, own)), `${own} is the run's own, not linked`)
     assert.equal(readFileSync(ext, 'utf8'), readFileSync(join(root, '.github/extensions/harness/extension.mjs'), 'utf8'))
   } finally { cleanup() }
   assert.ok(!existsSync(home))
