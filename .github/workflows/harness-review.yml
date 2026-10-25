@@ -64,8 +64,11 @@ jobs:
           # The same identity ship publishes with, so both agree on which
           # comments are the harness's own.
           GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
-        # Also skips a dispatched review of a pull request from a fork.
-        run: node harness/bin/run.mjs review "$PR" --phase prepare
+        # Also skips a dispatched review of a pull request from a fork. The
+        # number names the workspace path too: digits only.
+        run: |
+          case "$PR" in ''|*[!0-9]*|0*) echo "::error::pr must be a plain number, got '$PR'"; exit 1 ;; esac
+          node harness/bin/run.mjs review "$PR" --phase prepare
       - uses: actions/upload-artifact@v4
         with:
           name: review-handoff-prepare
@@ -220,6 +223,7 @@ jobs:
       # followed, copied into runner's own folder once every agent process is
       # dead; the uploads read the copy.
       - name: Collect the agents' outputs
+        id: collect
         if: always() && steps.stop.outputs.clean == 'true'
         # ADAPT: any other secret the build step was given (a package token)
         # goes here too, and its name in HARNESS_MASK.
@@ -235,7 +239,7 @@ jobs:
           node "$GITHUB_WORKSPACE/harness/bin/mask.mjs" "$out"
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.collect.outcome == 'success'
         with:
           name: review-handoff-build
           path: ${{ runner.temp }}/harness-out/handoff/review-*.build.json
@@ -243,7 +247,7 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.collect.outcome == 'success'
         with:
           name: harness-review-runs
           path: ${{ runner.temp }}/harness-out/runs/
@@ -255,6 +259,7 @@ jobs:
     needs: [prepare, review]
     if: always() && needs.prepare.outputs.skip == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: write

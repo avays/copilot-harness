@@ -13,7 +13,7 @@ export const DEFAULTS = {
   paths: {
     source: ['src/main/'],
     tests: ['src/test/'],
-    risky: ['.github/', 'harness/', 'harness.config.mjs'],
+    risky: ['AGENTS.md', '.github/', 'harness/', 'harness.config.mjs'],
     specs: 'specs',
     lessons: 'docs/harness-lessons.md',
   },

@@ -248,6 +248,7 @@ jobs:
       # followed, copied into runner's own folder once every agent process is
       # dead; the uploads read the copy.
       - name: Collect the agents' outputs
+        id: collect
         if: always() && steps.stop.outputs.clean == 'true'
         # ADAPT: any other secret the build step was given (a package token)
         # goes here too, and its name in HARNESS_MASK.
@@ -264,7 +265,7 @@ jobs:
 
       # Only this run's own files: the claim's are already in its artifact.
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.collect.outcome == 'success'
         with:
           name: handoff-build
           path: |
@@ -274,7 +275,7 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.collect.outcome == 'success'
         with:
           name: harness-ship-runs
           path: ${{ runner.temp }}/harness-out/runs/
@@ -288,6 +289,7 @@ jobs:
     # so the ticket is never left claimed with nobody working on it.
     if: always() && needs.claim.outputs.skip == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       issues: write

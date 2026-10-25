@@ -514,7 +514,7 @@ Built on Copilot CLI **dynamic workflows**, which are in **public preview**. The
 1.0.103, and `--experimental` is required.
 
 **Proven:**
-- **The loop logic:** 158 tests against a fake Copilot context and real git repositories.
+- **The loop logic:** 161 tests against a fake Copilot context and real git repositories.
 - **Loading and running headless:** Copilot CLI loads the staged harness headless and runs a workflow
   (`doctor --live`).
 - **The workflow files** pass actionlint.

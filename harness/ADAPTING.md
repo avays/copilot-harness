@@ -360,7 +360,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 158 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 161 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -500,7 +500,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   or merge the base into it yourself, before relabelling.
 - **One ticket per run.** Several tickets run as several jobs. GitHub runs them in parallel, and each
   has its own runner.
-- **Windows:** use WSL or Git Bash. Gate commands and `gh` calls run through `bash`.
+- **Windows:** use WSL or Git Bash. Gate commands and `gh` calls run through `bash`. The Windows-only
+  code paths (quoting arguments for `cmd.exe`, `taskkill`, copying the Copilot home where a symlink is
+  refused) have not been run on Windows.
 
 ## Checklist
 

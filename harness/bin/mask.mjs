@@ -7,21 +7,30 @@
 // The job log masks secrets; an uploaded artifact does not. The build job
 // runs this on its copy of the agents' outputs, as the runner, after every
 // agent process is dead, so what is uploaded never carries the token.
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 export function mask(dir, secrets) {
   let changed = 0
   const list = [].concat(secrets).filter((s) => s && s.length >= 4)
   if (!list.length) return changed
-  for (const name of readdirSync(dir, { recursive: true })) {
-    const p = join(dir, String(name))
-    if (!statSync(p).isFile()) continue
-    const text = readFileSync(p, 'latin1')
-    const masked = list.reduce((t, s) => t.split(s).join('***'), text)
-    if (masked !== text) { writeFileSync(p, masked, 'latin1'); changed++ }
+  // Walked by hand, so one odd entry can't stop it. A file that can't be
+  // read to check is removed: nothing unchecked is uploaded.
+  // Paths as bytes throughout, so a name that isn't valid UTF-8 still
+  // resolves to the file it names.
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true, encoding: 'buffer' })) {
+      const p = Buffer.concat([d, Buffer.from('/'), e.name])
+      if (e.isDirectory()) { walk(p); continue }
+      if (!e.isFile()) continue
+      try {
+        const text = readFileSync(p, 'latin1')
+        const masked = list.reduce((t, s) => t.split(s).join('***'), text)
+        if (masked !== text) { writeFileSync(p, masked, 'latin1'); changed++ }
+      } catch { rmSync(p, { force: true }) }
+    }
   }
+  walk(Buffer.from(dir))
   return changed
 }
 

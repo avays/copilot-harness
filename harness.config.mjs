@@ -33,6 +33,8 @@ export default {
     // A small run whose diff reaches one of these gets the full loop's
     // auditors and model. Put what is expensive to get wrong here.
     risky: [
+      // The rules the audits judge by: a diff that edits them is never small.
+      'AGENTS.md',
       'pom.xml',
       // The gate command is the base's, but it runs the branch's own build
       // wrapper and its Maven config: changes there change the gate.

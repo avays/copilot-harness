@@ -609,3 +609,27 @@ test('closing keywords in commit messages are found, the ticket\'s own excepted,
   const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [], closingCommits: ['#123'] })
   assert.match(body, /\[!WARNING\][\s\S]*would close #‍?123 on merge/)
 })
+
+test('mask gets past a file name that is not UTF-8, and still masks the rest', async () => {
+  const { mask } = await import('../bin/mask.mjs')
+  const { mkdtempSync, writeFileSync, readFileSync, mkdirSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const d = mkdtempSync(join(tmpdir(), 'mask-odd-'))
+  mkdirSync(join(d, 'runs'))
+  writeFileSync(Buffer.concat([Buffer.from(join(d, 'runs') + '/bad'), Buffer.from([0xff])]), 'tok=SECRETTOKEN123')
+  writeFileSync(join(d, 'runs', 'ok.txt'), 'tok=SECRETTOKEN123')
+  assert.equal(mask(d, ['SECRETTOKEN123']), 2)
+  assert.equal(readFileSync(join(d, 'runs', 'ok.txt'), 'utf8'), 'tok=***')
+})
+
+test('red-check reads a non-ASCII source path as it is', async () => {
+  const { nameStatusLines } = await import('../lib/git.mjs')
+  assert.equal(nameStatusLines('A\0src/main/Café.java\0R100\0src/main/A.java\0src/main/B.java\0'), 'A\tsrc/main/Café.java\nR100\tsrc/main/A.java\tsrc/main/B.java')
+})
+
+test('the spec link in a pull request cannot break out of its target', () => {
+  const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'harness/7-x', gate: { line: 'ok' }, rounds: [], specRounds: [], spec: { path: 'specs/a)@octocat-fixes#1(.md', summary: 's', decisions: [] } })
+  assert.doesNotMatch(body, /\)@octocat/)
+  assert.match(body, /specs\/a%29%40octocat-fixes%231%28\.md\)/)
+})

@@ -15,6 +15,9 @@ const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.])@(?=[\w
 // `<!--` too: agent text must not open a hidden comment, or carry a marker.
 export const tame = (t) => inert(String(t ?? '')).replace(/<!--/g, '&lt;!--')
 // A count from the build's report, printed only as a number.
+// A link target that nothing can break out of: every segment encoded,
+// including the ( ) ! ' * that encodeURIComponent leaves alone.
+const urlPath = (p) => String(p ?? '').split('/').map((seg) => encodeURIComponent(seg).replace(/[!'()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`)).join('/')
 const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : '?')
 
 // One line, no backticks of its own, tamed too: the file field is written
@@ -50,7 +53,7 @@ export function shipPrBody(r) {
       `Edit the messages (or squash with your own) before merging, unless that is intended.`)
   }
   if (r.spec) {
-    s.push(`## Spec\n\n[\`${tame(r.spec.path)}\`](../blob/${r.branch}/${encodeURI(r.spec.path)}) — ${tame(r.spec.summary)}`)
+    s.push(`## Spec\n\n[\`${tame(r.spec.path)}\`](../blob/${urlPath(r.branch)}/${urlPath(r.spec.path)}) — ${tame(r.spec.summary)}`)
     if (r.spec.decisions && r.spec.decisions.length) s.push(`**Decisions for the reviewer:**\n${r.spec.decisions.map((d) => `- [ ] ${tame(d)}`).join('\n')}`)
   }
   if (r.built) {

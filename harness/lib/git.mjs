@@ -13,8 +13,22 @@ export async function dirty(cwd) {
 }
 
 /** `git diff --name-status base...HEAD`, as text. */
+// -z, so no path comes back quoted; returned as tab-separated lines,
+// "status\tpath" or "status\told\tnew" for a rename or copy.
+export function nameStatusLines(z) {
+  const parts = String(z).split('\0'), lines = []
+  for (let i = 0; i < parts.length; i++) {
+    const status = parts[i]
+    if (!status) continue
+    const n = /^[RC]/.test(status) ? 2 : 1
+    lines.push([status, ...parts.slice(i + 1, i + 1 + n)].join('\t'))
+    i += n
+  }
+  return lines.join('\n')
+}
+
 export async function nameStatus(base, cwd) {
-  return (await git(['diff', '--name-status', `${base}...HEAD`], { cwd })).stdout
+  return nameStatusLines((await git(['diff', '--name-status', '-z', `${base}...HEAD`], { cwd })).stdout)
 }
 
 /**

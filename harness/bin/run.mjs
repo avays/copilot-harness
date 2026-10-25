@@ -201,7 +201,8 @@ export function stageHarness(root, own = process.env.COPILOT_HOME || join(homedi
     for (const entry of readdirSync(own)) {
       if (entry === 'extensions' || RUN_STATE.test(entry)) continue
       if (TRUST_FILES.has(entry)) writeFileSync(join(home, entry), untrusted(readFileSync(join(own, entry), 'utf8')))
-      else symlinkSync(join(own, entry), join(home, entry))
+      // Windows refuses symlinks without admin rights or Developer Mode: copy.
+      else { try { symlinkSync(join(own, entry), join(home, entry)) } catch { cpSync(join(own, entry), join(home, entry), { recursive: true }) } }
     }
   }
   return { home, cleanup: () => rmSync(stage, { recursive: true, force: true }) }
@@ -236,13 +237,16 @@ export function runCopilot(root, config, workflow, args, dir, cwd, timeoutMinute
     // Copilot itself exits, stop waiting for it.
     const finish = () => { if (!settled) { settled = true; p.stdout.destroy(); onClose(exitCode) } }
     const timer = setTimeout(() => { timedOut = true; killGroup(); setTimeout(finish, 5000) }, timeoutMinutes * 60_000)
+    p.stdout.setEncoding('utf8')
     p.stdout.on('data', (d) => { out += d; process.stderr.write(d) })
     p.on('error', (e) => { clearTimeout(timer); settled = true; stage.cleanup(); done({ outcome: 'error', reason: `could not start ${config.copilot.bin}: ${e.message}` }) })
     p.on('exit', (code) => { exitCode = code; setTimeout(finish, 5000) })
     p.on('close', (code) => { if (!settled) { settled = true; onClose(code) } })
     function onClose(code) {
       clearTimeout(timer)
-      killGroup()
+      // Anything the run left behind goes with it. On Windows, taskkill only
+      // after a timeout: the pid of a process that already exited may be reused.
+      if (!win || timedOut) killGroup()
       stage.cleanup()
       // Kept on a timeout too: that is when someone will want to read it. The
       // Copilot token is masked in the job log but not in an artifact.
@@ -381,7 +385,10 @@ async function shipBuild(opt, root, config, state) {
   // In Actions the work leaves this job as a bundle, and publish pushes it:
   // nothing in this job could.
   let bundle = null
-  const ahead = Number((await git(['rev-list', '--count', `origin/${base}..HEAD`], { cwd: workdir })).stdout.trim() || 0)
+  // The work is HEAD, wherever an agent left it: point the branch at it, so
+  // what is counted and what is bundled are the same commits.
+  await git(['update-ref', `refs/heads/${branch}`, 'HEAD'], { cwd: workdir })
+  const ahead = Number((await git(['rev-list', '--count', `origin/${base}..refs/heads/${branch}`], { cwd: workdir })).stdout.trim() || 0)
   if (CI && ahead > 0) {
     bundle = `ship-${opt.n}.bundle`
     await must(['bundle', 'create', join(harnessDir(root, 'handoff'), bundle), `refs/heads/${branch}`, `^origin/${base}`], workdir, 'git bundle create')

@@ -19,6 +19,8 @@ function run(bin, args, { cwd, env, signal, timeoutMs }) {
     const p = spawn(bin, args, { cwd, env: { ...process.env, ...env }, signal, stdio: ['ignore', 'pipe', 'pipe'] })
     const timer = timeoutMs ? setTimeout(() => p.kill('SIGTERM'), timeoutMs) : null
     let stdout = '', stderr = ''
+    // Decoded as a stream, so a character split across chunks stays whole.
+    p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8')
     p.stdout.on('data', (d) => { stdout += d; out.push(d) })
     p.stderr.on('data', (d) => { stderr += d; out.push(d) })
     p.on('error', (e) => { if (timer) clearTimeout(timer); resolveRun({ code: 127, stdout, stderr: stderr + String(e.message), out: out.join('') + String(e.message) }) })
