@@ -77,8 +77,9 @@ export function lastHandBack(comments, marker, harness) {
   }
   const asked = [...segments].reverse().find((seg) => seg.length)
   if (!asked) return null
-  const since = asked[0].claimed || ''
-  const after = comments.filter((x) => (x.createdAt || '') > since && !String(x.body || '').includes(marker))
+  // As times: `claimed` carries milliseconds and createdAt does not.
+  const since = Date.parse(asked[0].claimed || '') || 0
+  const after = comments.filter((x) => (Date.parse(x.createdAt || '') || 0) > since && !String(x.body || '').includes(marker))
   return { text: asked.map((m) => m.text).join('\n\n---\n\n'), after }
 }
 

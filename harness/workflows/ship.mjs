@@ -326,7 +326,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     )
     // A fixer that says it cannot resolve them is believed: another gate and
     // audit would only confirm it.
-    if (!fixed || !fixed.ok) return handBack('Code Audit', fixed ? `the fixer could not resolve them: ${fixed.summary}` : 'the fixer did not finish', open)
+    if (!fixed || !fixed.ok) return handBack('Code Audit', fixed ? `the fixer could not resolve them: ${fixed.summary}` : 'the fixer did not finish', open, state.rounds.at(-1).audited ? [] : lastAudit)
   }
 
   // ── 7. Learn ───────────────────────────────────────────────────────────────

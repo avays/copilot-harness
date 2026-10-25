@@ -704,3 +704,11 @@ test('a dead spec auditor after a revision lists the revision nobody re-audited'
   assert.equal(r.phase, 'Spec Audit')
   assert.deepEqual(r.alsoOpen.map((f) => f.claim), ['X'])
 })
+
+test('a fixer that fails on a red round still lists the earlier fix nobody re-audited', async () => {
+  let n = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++n === 1 ? { ...clean, findings: [blocker({ claim: 'X' })] } : clean), 'fix#2': { ok: false, summary: 'cannot' } }))
+  const r = await run(ctx, { config: config(), deps: deps({ gates: [green(), red()] }) })
+  assert.match(r.reason, /could not resolve/)
+  assert.deepEqual(r.alsoOpen.map((f) => f.claim), ['X'])
+})

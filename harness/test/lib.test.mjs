@@ -793,3 +793,18 @@ test('a command that ignores SIGTERM is killed after the grace period', async ()
   await sh("trap '' TERM; sleep 20", { timeoutMs: 200 })
   assert.ok(Date.now() - t < 9000)
 })
+
+test('the gate is red when a report records a failing test, whatever the exit code', async () => {
+  const { gate } = await import('../lib/gate.mjs')
+  const { mkdtempSync } = await import('node:fs')
+  const { execSync } = await import('node:child_process')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const d = mkdtempSync(join(tmpdir(), 'gate-ignore-'))
+  execSync('git init -q && git -c user.email=a@b -c user.name=a commit -q --allow-empty -m a && printf "target/\\n" > .git/info/exclude', { cwd: d })
+  const run = 'mkdir -p target/surefire-reports && printf \'<testsuite><testcase classname="A" name="b"><failure message="boom"/></testcase></testsuite>\' > target/surefire-reports/T.xml'
+  const g = await gate({ config: { commands: { gate: [{ name: 'test', run }], reports: ['target/surefire-reports'] }, paths: { tests: ['src/test/'] }, risky: [], sizing: {} }, cwd: d, base: 'HEAD' })
+  assert.equal(g.steps[0].ok, true)
+  assert.equal(g.ok, false)
+  assert.equal(g.failedTests[0].test, 'A#b')
+})

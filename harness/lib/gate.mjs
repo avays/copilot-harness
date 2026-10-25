@@ -67,7 +67,9 @@ export async function gate({ config, cwd, base, signal }) {
     .flatMap((f) => failedTestsIn(readFileSync(f, 'utf8')))
   const isDirty = await dirty(cwd)
   return {
-    ok: steps.every((s) => s.ok) && !isDirty,
+    // A failing test in a report is red even when the command exited 0
+    // (maven.test.failure.ignore, a lenient Gradle task).
+    ok: steps.every((s) => s.ok) && !failedTests.length && !isDirty,
     sha: await head(cwd),
     dirty: isDirty,
     steps,
