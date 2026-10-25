@@ -856,3 +856,20 @@ test('an aborted command is stopped and waited for, not left running', async () 
   const pre = new AbortController(); pre.abort()
   assert.notEqual((await sh('sleep 1', { signal: pre.signal })).code, 0)
 })
+
+test('a command whose shell exits returns, though a background child holds the output', async () => {
+  const { sh } = await import('../lib/exec.mjs')
+  const t = Date.now()
+  const r = await sh('sleep 20 & echo started')
+  assert.equal(r.code, 0)
+  assert.match(r.out, /started/)
+  assert.ok(Date.now() - t < 6000)
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 300)
+  assert.equal((await sh('sleep 3', { signal: ac.signal })).stopped, true)
+})
+
+test('a self-closing system-out does not hide the failure after it', () => {
+  const xml = '<testcase classname="A" name="a"><system-out/><failure message="boom"/></testcase><testcase classname="A" name="b"><system-err /><error/></testcase>'
+  assert.deepEqual(failedTestsIn(xml).map((f) => f.test), ['A#a', 'A#b'])
+})

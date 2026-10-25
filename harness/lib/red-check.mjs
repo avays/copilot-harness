@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { git, sh, tail } from './exec.mjs'
+import { failedSince } from './gate.mjs'
 import { nameStatus, under } from './git.mjs'
 
 /** From `git diff --name-status`, what to revert and which tests to run. */
@@ -43,10 +44,14 @@ export async function redCheck({ config, cwd, base, signal }) {
     for (const f of p.added) rmSync(join(dir, f), { force: true })
     for (const r of p.renamed) { rmSync(join(dir, r.to), { force: true }); await git(['checkout', base, '--', r.from], { cwd: dir }) }
     const cmd = config.commands.testsOnly.replace('{tests}', p.tests.join(','))
+    const started = Date.now()
     const r = await sh(cmd, { cwd: dir, signal })
+    // Stopped part-way says nothing about the base either way.
+    if (r.stopped) return { checked: false, reason: 'the red-check was stopped before it finished' }
     // A compile failure counts as failing on the base: a test that needs the
-    // new code to compile cannot pass without it.
-    return { checked: true, failedOnBase: r.code !== 0, tests: p.tests, reverted: [...p.code, ...p.added, ...p.renamed.map((x) => x.to)], output: tail(r.out, 20) }
+    // new code to compile cannot pass without it. So does a failing report
+    // under an exit 0, as in the gate.
+    return { checked: true, failedOnBase: r.code !== 0 || failedSince(dir, config, started).length > 0, tests: p.tests, reverted: [...p.code, ...p.added, ...p.renamed.map((x) => x.to)], output: tail(r.out, 20) }
   } finally {
     await git(['worktree', 'remove', '--force', dir], { cwd })
     rmSync(dir, { recursive: true, force: true })

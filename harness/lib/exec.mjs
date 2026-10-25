@@ -46,13 +46,16 @@ function run(bin, args, { cwd, env, signal, timeoutMs }) {
     p.stdout.setEncoding('utf8'); p.stderr.setEncoding('utf8')
     p.stdout.on('data', (d) => { stdout += d; out.push(d) })
     p.stderr.on('data', (d) => { stderr += d; out.push(d) })
+    // The command is done when its process exits, as an Actions step is: a
+    // background child left holding the pipes (a server it started) must
+    // not hold the gate. Unstopped, a moment to drain what is still queued.
     p.on('exit', (code) => {
-      if (!stopped) return
-      p.stdout.destroy(); p.stderr.destroy()
-      finish({ code: code ?? 1, stdout, stderr, out: out.join('') })
+      const end = () => { p.stdout.destroy(); p.stderr.destroy(); finish({ code: code ?? 1, stdout, stderr, out: out.join(''), stopped }) }
+      if (stopped) end()
+      else setTimeout(end, 2000).unref()
     })
     p.on('error', (e) => finish({ code: 127, stdout, stderr: stderr + String(e.message), out: out.join('') + String(e.message) }))
-    p.on('close', (code) => finish({ code: code ?? 1, stdout, stderr, out: out.join('') }))
+    p.on('close', (code) => finish({ code: code ?? 1, stdout, stderr, out: out.join(''), stopped }))
   })
 }
 

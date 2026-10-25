@@ -16,7 +16,7 @@ export function failedTestsIn(xml) {
   for (const m of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
     // What the test printed is not the verdict: a passing test may log
     // `<error code=…>`, and Surefire writes system-out for passing tests too.
-    const body = (m[2] || '').replace(/<(system-out|system-err)\b[\s\S]*?(?:<\/\1>|$)/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+    const body = (m[2] || '').replace(/<(system-out|system-err)\b(?:[^>]*\/>|[\s\S]*?(?:<\/\1>|$))/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
     const f = /<(failure|error)(?=[\s>\/])([^>]*)>?([\s\S]*?)(?:<\/\1>|$)/.exec(body)
     if (!f) continue
     const attr = (name) => (new RegExp(`\\b${name}="([^"]*)"`).exec(m[1]) || [])[1] || ''
@@ -32,7 +32,9 @@ function reportFiles(dir, since) {
   const out = []
   for (const name of readdirSync(dir, { recursive: true })) {
     const p = join(dir, String(name))
-    if (p.endsWith('.xml') && statSync(p).mtimeMs >= since) out.push(p)
+    // A second's slack: file times can trail the clock, and a fresh report
+    // stamped a moment before `since` must not be missed.
+    if (p.endsWith('.xml') && statSync(p).mtimeMs >= since - 1000) out.push(p)
   }
   return out
 }
@@ -56,6 +58,11 @@ function reportDirs(cwd, configured) {
  * tree is clean afterwards: green on uncommitted changes is green on code the
  * pull request will not contain.
  */
+/** Failing tests in the reports written under `cwd` since `since`. */
+export const failedSince = (cwd, config, since) => reportDirs(cwd, config.commands.reports)
+  .flatMap((d) => reportFiles(d, since))
+  .flatMap((f) => failedTestsIn(readFileSync(f, 'utf8')))
+
 export async function gate({ config, cwd, base, signal }) {
   const started = Date.now()
   const steps = []
@@ -64,9 +71,7 @@ export async function gate({ config, cwd, base, signal }) {
     steps.push({ name: g.name, ok: r.code === 0, code: r.code, tail: r.code === 0 ? '' : tail(r.out) })
     if (r.code !== 0) break
   }
-  const failedTests = reportDirs(cwd, config.commands.reports)
-    .flatMap((d) => reportFiles(d, started))
-    .flatMap((f) => failedTestsIn(readFileSync(f, 'utf8')))
+  const failedTests = failedSince(cwd, config, started)
   const isDirty = await dirty(cwd)
   return {
     // A failing test in a report is red even when the command exited 0
