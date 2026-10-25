@@ -26,6 +26,10 @@ import { REVIEW_MARKER, reviewComment, SHIP_MARKER, shipIssueComment, shipPrBody
 import { reviewSize } from '../lib/sizing.mjs'
 import { slug } from '../workflows/ship.mjs'
 
+// Anything printed from a hand-off, an agent or GitHub goes on one line: Actions reads a log line that starts with `::` as
+// a workflow command, so a newline in it could issue one.
+export const oneLine = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ')
+
 const CI = Boolean(process.env.GITHUB_ACTIONS)
 
 /** The command line `copilot workflow run` needs. Global options come first. */
@@ -355,7 +359,7 @@ async function shipPrepare(opt, root, config) {
   // either in this snapshot or after this claim, never in neither.
   const claimed = new Date().toISOString()
   const t = await GH.issue(opt.n, root)
-  const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
+  const skip = (reason) => { console.error(`harness: ${oneLine(reason)}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
   if (t.state !== 'OPEN') return skip(`#${opt.n} is ${t.state.toLowerCase()} — nothing to do`)
   // A run that crashes still ends in publish, which removes the label; one
   // still there means a run is in flight, and a second would race it.
@@ -528,7 +532,7 @@ async function shipPublish(opt, root, config, state, built) {
     // workflow_dispatch is the documented exception. With a PAT the PR's own
     // event starts the review, and a dispatch would start a second one.
     if (!draft && CI && config.github.reviewWorkflow && process.env.HARNESS_USES_PAT !== 'true') {
-      await GH.dispatch(config.github.reviewWorkflow, { pr: prNumber }, root).catch((e) => console.error(`could not start the review: ${e.message}`))
+      await GH.dispatch(config.github.reviewWorkflow, { pr: prNumber }, root).catch((e) => console.error(`could not start the review: ${oneLine(e.message)}`))
     }
   }
   await GH.comment(n, shipIssueComment(result, url, state.claimed), root)
@@ -549,7 +553,7 @@ async function ship(opt, root, config) {
     }
     await shipPublish(opt, root, config, state, readHandoff(root, opt, 'build'))
   } catch (e) {
-    console.error(`harness: ${e.message}`)
+    console.error(`harness: ${oneLine(e.message)}`)
     process.exitCode = 1
     // The build job has no token to report with; publish reports the
     // missing result instead. Elsewhere, a ticket must never be left looking
@@ -566,7 +570,7 @@ export const issueFromBranch = (ref) => Number((/^harness\/(\d+)-/.exec(String(r
 
 async function reviewPrepare(opt, root, config) {
   const p = await GH.pr(opt.n, root)
-  const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
+  const skip = (reason) => { console.error(`harness: ${oneLine(reason)}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
   if (p.isDraft) return skip(`#${opt.n} is a draft — reviewed once it is marked ready`)
   // Its extension would run with this repository's Copilot token.
   if (p.isCrossRepository) return skip(`#${opt.n} comes from a fork — the harness does not run code from forks`)
@@ -618,10 +622,6 @@ async function reviewBuild(opt, root, config, state) {
   return result
 }
 
-// Agent text on one line: Actions reads a log line that starts with `::` as
-// a workflow command, so a newline in it could issue one.
-const oneLine = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ')
-
 async function reviewPublish(opt, root, config, built) {
   const result = built ? built.result : { outcome: 'error', reason: 'the review job did not finish' }
   const summary = (text) => process.env.GITHUB_STEP_SUMMARY && appendFileSync(process.env.GITHUB_STEP_SUMMARY, text + '\n')
@@ -634,7 +634,7 @@ async function reviewPublish(opt, root, config, built) {
   const body = reviewComment(result)
   if (opt.publish) await GH.upsertComment(opt.n, REVIEW_MARKER, body, root)
   summary(body)
-  console.error(`harness: review ${result.verdict} · ${result.confidence} confidence`)
+  console.error(`harness: review ${oneLine(result.verdict)} · ${oneLine(result.confidence)} confidence`)
   return result
 }
 
@@ -669,5 +669,5 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((e) => { console.error(`harness: ${e.message}`); process.exit(1) })
+  main().catch((e) => { console.error(`harness: ${oneLine(e.message)}`); process.exit(1) })
 }

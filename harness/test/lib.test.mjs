@@ -873,3 +873,9 @@ test('a self-closing system-out does not hide the failure after it', () => {
   const xml = '<testcase classname="A" name="a"><system-out/><failure message="boom"/></testcase><testcase classname="A" name="b"><system-err /><error/></testcase>'
   assert.deepEqual(failedTestsIn(xml).map((f) => f.test), ['A#a', 'A#b'])
 })
+
+test('text printed to the log cannot start a workflow command', async () => {
+  const { oneLine } = await import('../bin/run.mjs')
+  assert.equal(oneLine('pass\n::error::x\r\n::add-mask::y'), 'pass ::error::x ::add-mask::y')
+  assert.equal(oneLine(undefined), '')
+})
