@@ -173,7 +173,7 @@ export async function run(ctx, { config, deps = realDeps }) {
     ctx.phase('Spec Audit')
     const res = await audit(specLenses, (l, retry) => ctx.agent(
       `${COMMON}\n\n${ticket}\n\n${P.continuingAudit(a)}${P.specAuditAsk({ lensAsk: l.ask, specPath: spec.path })}`,
-      { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(T.think) },
+      { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(l.model || T.think) },
     ))
     if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`)
     const found = res.reports.flatMap(findingsOf)

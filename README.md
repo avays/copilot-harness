@@ -93,7 +93,7 @@ node harness/bin/run.mjs ship 42 --no-publish   # a full local run: nothing push
 node harness/bin/run.mjs ship 42                # claim, build, open the PR
 node harness/bin/run.mjs review 57
 node harness/bin/run.mjs ship 42 --phase prepare|build|publish  # one phase, as the Actions jobs run them
-node --test harness/test/*.test.mjs   # the harness's own tests, about a second
+node --test harness/test/*.test.mjs   # the harness's own tests, about ten seconds
 ```
 
 On a laptop, each ticket gets a git worktree under `.harness/worktrees/`, so your own checkout is never

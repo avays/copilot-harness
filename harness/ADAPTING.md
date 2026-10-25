@@ -63,6 +63,9 @@ Then edit the three workflow files where they say `ADAPT`:
 
   A database started under `services:` runs in Docker, which that step stops. Install it as a system
   package instead, or see the next point.
+- **What the review covers.** `harness-review.yml` reviews every ready pull request from the
+  repository, people's as well as the harness's, and each review spends AI credits from the token
+  owner's allowance. Narrow its `on:` (a label, a branch prefix) if that isn't what the team wants.
 - **Docker.** The build and review jobs switch Docker off before the agents start, because access to
   Docker is root by another name. If the gate needs it (Testcontainers is common in Spring Boot), make
   three edits in *Isolate the agents*, in both workflows:
@@ -240,7 +243,7 @@ Write it like a brief for a reviewer who has never seen the project. It may be a
 of the base ref (`(base) => \`… git diff ${base}...HEAD …\``). A lens needs `tiers` (`small`, `full`), or a
 tier's `codeLenses` / `specLenses` must list its key. Its key can't be one of the built-in lenses'
 (`combined`, `criteria`, `rules`, `tests`, `fit`). Its optional `model` is a slot (`light`, `standard`,
-`strong`). The config refuses anything else, because a lens that never runs would read as a clean
+`strong`), for code and spec lenses alike. The config refuses anything else, because a lens that never runs would read as a clean
 audit.
 
 ### `models` and `tiers`
@@ -410,13 +413,20 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   workflow file or a local action (`.github/actions/`), and makes every field of the build's report
   that reaches GitHub inert (no closing keywords, no @mentions) or a plain number.
 - **What an agent that went wrong can still do,** with `COPILOT_GITHUB_TOKEN` scoped to Copilot alone:
-  spend Copilot credits (up to `copilot.timeoutMinutes`, and any `copilot.limits`); read anything the
-  build job gives it (a read-only package token, if you add one); write commits a person will review;
+  read that token, and anything else the build job gives it (a read-only package token, if you add
+  one), and **send it out**, since its code has the network. The harness masks the token in what it
+  uploads and posts, but it can't stop deliberate exfiltration, so spend is bounded by the token's
+  lifetime, not by `copilot.timeoutMinutes` or `copilot.limits`. Give the token a short expiry, keep it
+  on a dedicated account, and revoke it if a run looks wrong. Beyond that, an agent can write commits
+  a person will review;
   and **write the build job's report**, that is the PR body's *Checks* and audit table, since the
   hand-off is written by the agents' user. The project's own CI on the pull request is the independent
   check, so make it a required status check. If the gate needs Docker (Testcontainers), the agents'
   user needs Docker access, and that is root: the boundary inside the job is then gone. Run that build
   in a container or VM of its own, or accept it for tickets from people you trust.
+- **The ticket itself is trusted as written.** Its body is re-read on every claim, and whoever can edit
+  it (its author, at least) can change the agents' brief between runs, write access or not. Whoever
+  relabels a ticket should read it first.
 - **Who can answer a hand-back.** The comments after the harness's hand-back reach the next run's agents
   as part of their brief, so only people GitHub says can write to the repository are read. Asking GitHub
   that needs a token with push access, which is why the claim job (and review's prepare job) have

@@ -382,10 +382,13 @@ test('a process that left the group and holds Copilot\'s output cannot stall the
   const dir = mkdtempSync(join(tmpdir(), 'harness-hang-'))
   const bin = join(dir, 'fake-copilot')
   // Leaves a detached sleeper holding stdout, then exits at once.
-  writeFileSync(bin, '#!/bin/bash\nsetsid sleep 60 &\nexit 0\n')
+  const pidFile = join(dir, 'sleeper.pid')
+  writeFileSync(bin, `#!/bin/bash\nsetsid sleep 60 &\necho $! > ${pidFile}\nexit 0\n`)
   chmodSync(bin, 0o755)
   const started = Date.now()
   const r = await runCopilot(resolve(import.meta.dirname, '../..'), config({ copilot: { bin, timeoutMinutes: 5 } }), 'harness-ping', {}, dir, dir)
+  // The sleeper left the group on purpose; this test cleans it up.
+  try { process.kill(Number((await import('node:fs')).readFileSync(pidFile, 'utf8')), 'SIGKILL') } catch {}
   assert.ok(Date.now() - started < 15000, `took ${Date.now() - started}ms`)
   assert.equal(r.outcome, 'error')
 })
@@ -418,6 +421,9 @@ test('every field of the build\'s report that reaches GitHub is tamed or a numbe
   assert.doesNotMatch(body, /@octocat|fixes #1/)
   const review = reviewComment({ verdict: 'pass', confidence: evil, missing: [evil], size: evil, lenses: [evil], covered: '', blockers: [], minors: [] })
   assert.doesNotMatch(review, /@octocat|fixes #1/)
+  // A file name that tries to end its code span, and a mention right after a backtick.
+  const odd = shipPrBody({ outcome: 'handback', issue: 7, reason: 'ping `@octocat now', phase: 'p', open: [blocker({ file: 'x\n\n@octocat fixes #1\n\n' })], rounds: [], specRounds: [] })
+  assert.doesNotMatch(odd, /@octocat|fixes #1/)
 })
 
 test('the hand-back is found whether the bot is github-actions or github-actions[bot]', async () => {

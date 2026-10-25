@@ -11,12 +11,14 @@ const ZWJ = '\u200d'
 // a code span starts and ends is fragile, and a joiner inside code is
 // harmless. File paths go through code() instead, untouched.
 const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s*)(?=(?:[\w.-]+\/[\w.-]+)?#\d|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/gi
-const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.`])@(?=[\w-])/g, `@${ZWJ}`)
+const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.])@(?=[\w-])/g, `@${ZWJ}`)
 export const tame = (t) => inert(String(t ?? ''))
 // A count from the build's report, printed only as a number.
 const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : '?')
 
-const code = (t) => `\`${String(t ?? '').replace(/`/g, "'")}\``
+// One line, no backticks of its own, tamed too: the file field is written
+// by the agents, and a blank line would end the code span around it.
+const code = (t) => `\`${tame(String(t ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'"))}\``
 const list = (fs) => fs.map((f) => `- **${tame(f.category)}** ${code(`${f.file}${f.line ? ':' + f.line : ''}`)} — ${tame(f.claim)}${f.fix ? `\n  *Fix:* ${tame(f.fix)}` : ''}`).join('\n')
 
 function auditTable(r) {

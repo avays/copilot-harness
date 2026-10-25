@@ -14,6 +14,8 @@
 ## the reviewers run with this repository's Copilot token.
 name: "Harness · review"
 
+# ADAPT: who gets reviewed. Narrow this (types, branches, a label) if the
+# team does not want every ready pull request reviewed at its expense.
 on:
   pull_request:
     types: [opened, ready_for_review, reopened]
