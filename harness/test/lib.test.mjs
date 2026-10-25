@@ -778,3 +778,18 @@ test('a timed-out command returns even when its children still hold the output o
   assert.notEqual(r.code, 0)
   assert.ok(Date.now() - t < 5000)
 })
+
+test('tame catches mentions and closing keywords hidden in entities or tags', async () => {
+  const { tame } = await import('../lib/publish.mjs')
+  for (const s of ['&#64;octocat', '&#x40;octocat', '&commat;octocat']) assert.match(tame(s), /^&amp;/, s)
+  for (const s of ['fixes&#32;#1', 'fixes &#35;1', 'closes&nbsp;#1']) assert.match(tame(s), /&amp;/, s)
+  assert.match(tame('fixes <b></b>#1'), new RegExp(`fixes‍`))
+  assert.equal(tame('a && b, x < y'), 'a && b, x < y')
+})
+
+test('a command that ignores SIGTERM is killed after the grace period', async () => {
+  const { sh } = await import('../lib/exec.mjs')
+  const t = Date.now()
+  await sh("trap '' TERM; sleep 20", { timeoutMs: 200 })
+  assert.ok(Date.now() - t < 9000)
+})

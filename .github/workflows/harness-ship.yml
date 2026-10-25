@@ -259,7 +259,7 @@ jobs:
           out="$RUNNER_TEMP/harness-out"
           rm -rf "$out"; mkdir -p "$out"
           cd /srv/harness/root/.harness 2>/dev/null || exit 0
-          /usr/bin/find -P handoff runs -type f \( -name 'ship-*.build.json' -o -name 'ship-*.bundle' -o -path 'runs/*' \) -exec /usr/bin/cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
+          /usr/bin/find -P handoff runs -type f \( -path "handoff/ship-$ISSUE.build.json" -o -path "handoff/ship-$ISSUE.bundle" -o -path 'runs/*' \) -exec /usr/bin/cp --no-dereference --parents -t "$out/" {} + 2>/dev/null || true
           # The job log masks secrets; an artifact does not.
           node "$GITHUB_WORKSPACE/harness/bin/mask.mjs" "$out"
           # The commits travel as a bundle, which masking can't reach: read them from the runner's own

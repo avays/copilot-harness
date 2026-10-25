@@ -208,7 +208,7 @@ detection, escalation and review sizing all go quiet without an error. Doctor fa
 Spock (`*Spec.groovy`), Cucumber or Kotest.
 
 **Check:** run the gate command yourself in a clean clone, then run red-check on a branch with a real
-change and its test (`node -e "import('./harness/lib/red-check.mjs').then(async m => console.log(await m.redCheck({ config: await (await import('./harness/lib/config.mjs')).loadConfig(), cwd: process.cwd(), base: 'origin/main' })))"`, with your `base` for `main`).
+change and its test (`node -e "import('./harness/lib/red-check.mjs').then(async m => console.log(await m.redCheck({ config: await (await import('./harness/lib/config.mjs')).loadConfig(), cwd: process.cwd(), base: 'origin/main' })))"`, **replace `origin/main` with your `base`**, e.g. `origin/develop`).
 It should print `failedOnBase: true`.
 
 ## 5. Sizing, lenses and models
@@ -229,7 +229,7 @@ verbatim:
 
 ### `lenses`
 
-The built-in audit lenses are `combined` (small tickets), `criteria` and `rules` (full tickets). Add
+The built-in audit lenses are `combined` (small tickets), `criteria` and `rules` (full tickets, and small ones that change an API or reach broadly). Add
 your own for a concern this project has. **For a migration, a parity lens is the one most worth
 adding.** It is the check that "the new code behaves like the old" that no generic reviewer makes:
 
@@ -364,7 +364,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 188 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 190 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
