@@ -41,17 +41,56 @@ export const issue = (n, cwd) =>
     .then((i) => ({ ...i, labels: (i.labels || []).map((l) => l.name), comments: i.comments || [] }))
 
 /**
- * What people said after the harness last spoke on the issue: the answer to
- * a hand-back. Only from people with write access, since it reaches the
- * agents as part of their brief, and anyone can comment on a public repo.
+ * The harness's last hand-back on the issue, and the comments that answer
+ * it. A hand-back is the harness's own comment carrying the marker — only
+ * from `harness`, its login, when that is known, so a pasted marker counts
+ * for nothing. Its marker records when that run claimed the ticket, and the
+ * answer is every comment since then: one posted while that run was still
+ * working is an answer too.
  */
-export function answerSince(comments, marker) {
-  let last = -1
-  comments.forEach((c, i) => { if (String(c.body || '').includes(marker)) last = i })
-  if (last < 0) return ''
-  return comments.slice(last + 1)
-    .filter((c) => ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(c.authorAssociation) && !String(c.body || '').includes(marker))
-    .map((c) => String(c.body || '').trim()).filter(Boolean).join('\n\n---\n\n').slice(0, 4000)
+export function lastHandBack(comments, marker, harness) {
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i], body = String(c.body || '')
+    if (!body.includes(marker) || (harness && (c.author && c.author.login) !== harness)) continue
+    const claimed = (/claimed=([0-9T:.\-Z]+)/.exec(body.slice(body.indexOf(marker))) || [])[1] || c.createdAt
+    const text = body.slice(0, body.indexOf(marker)).trim()
+    const after = comments.filter((x) => x !== c && (x.createdAt || '') > (claimed || '') && !String(x.body || '').includes(marker))
+    return { text, after }
+  }
+  return null
+}
+
+/**
+ * The answer to a hand-back: the hand-back itself, then what people with
+ * write access said since. It reaches the agents as part of their brief,
+ * and anyone can comment on a public repository, so who may answer
+ * matters: `canWrite(login)` decides, and the skipped authors are returned.
+ */
+export async function answerSince(comments, marker, canWrite, harness = null) {
+  const back = lastHandBack(comments, marker, harness)
+  if (!back) return { answer: '', skipped: [] }
+  const kept = [], skipped = new Set()
+  for (const c of back.after) {
+    const login = c.author && c.author.login
+    if (login && (await canWrite(login, c))) kept.push(String(c.body || '').trim())
+    else skipped.add(login || '(unknown)')
+  }
+  if (!kept.filter(Boolean).length) return { answer: '', skipped: [...skipped] }
+  // Newest last, and kept if anything must go: it is the latest word.
+  const said = kept.filter(Boolean).join('\n\n---\n\n')
+  const answer = `The hand-back said:\n${back.text}\n\nThe answer:\n${said.length > 4000 ? '…' + said.slice(-4000) : said}`
+  return { answer, skipped: [...skipped] }
+}
+
+/**
+ * Whether a person may write to the repository. The API's answer, when the
+ * token can read it; otherwise the comment's author association, which
+ * under-reports private organisation members (they show as CONTRIBUTOR).
+ */
+export async function writer(login, comment, cwd) {
+  const r = await sh(`gh api repos/{owner}/{repo}/collaborators/${q(login)}/permission --jq .permission`, { cwd, env: await repoEnv(cwd) })
+  if (r.code === 0) return ['admin', 'maintain', 'write'].includes(r.stdout.trim())
+  return ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(comment.authorAssociation)
 }
 
 export const pr = (n, cwd) =>
@@ -81,7 +120,7 @@ export const dispatch = (workflow, inputs, cwd) =>
 
 // Who the token acts as. GITHUB_TOKEN cannot read /user; in Actions its
 // comments are github-actions[bot].
-async function whoami(cwd) {
+export async function whoami(cwd) {
   const r = await sh('gh api user --jq .login', { cwd, env: await repoEnv(cwd) })
   if (r.code === 0 && r.stdout.trim()) return r.stdout.trim()
   return process.env.GITHUB_ACTIONS ? 'github-actions[bot]' : null

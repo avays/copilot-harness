@@ -86,3 +86,9 @@ test('a review carries at most five minors', async () => {
   const ctx = fakeCtx({ ...ARGS, size: 'large' }, (l) => (l.startsWith('lens:criteria') ? lensReport({ findings: minors.slice(0, 5) }) : l.startsWith('lens:rules') ? lensReport({ findings: minors.slice(5) }) : l.startsWith('lens:') ? lensReport() : undefined))
   assert.equal((await run(ctx, { config: config() })).minors.length, 5)
 })
+
+test('a review is told the spec may not exist: a person\'s pull request has none', async () => {
+  const ctx = fakeCtx(ARGS, (l) => (l.startsWith('lens:') ? lensReport() : undefined))
+  await run(ctx, { config: config() })
+  assert.match(ctx.calls[0].prompt, /then the spec the diff adds, if any/)
+})

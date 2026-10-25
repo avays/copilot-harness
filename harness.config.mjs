@@ -117,6 +117,8 @@ export default {
   review: {
     // 'fast' sizes reviews one step down, 'thorough' always large.
     depth: 'normal',
+    // The review's Copilot run, below the review job's timeout-minutes (45).
+    timeoutMinutes: 35,
     tinyLines: 30,
     smallLines: 300,
   },

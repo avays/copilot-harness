@@ -295,9 +295,11 @@ async function shipPrepare(opt, root, config) {
     await GH.relabel(opt.n, { remove: [L.ready, L.stuck, L.done] }, root)
   }
   // A person's answer to the last hand-back joins whatever --notes says.
-  const answer = GH.answerSince(t.comments, SHIP_MARKER)
-  const notes = [opt.notes, answer && `Answer to the last hand-back: ${answer}`].filter(Boolean).join('\n\n')
-  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes, size: opt.size }
+  const harnessLogin = await GH.whoami(root)
+  const { answer, skipped } = await GH.answerSince(t.comments, SHIP_MARKER, (login, c) => GH.writer(login, c, root), harnessLogin)
+  if (skipped.length) console.error(`harness: ignored comments from ${skipped.join(', ')} — only people with write access answer a hand-back`)
+  const notes = [opt.notes, answer].filter(Boolean).join('\n\n')
+  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes, size: opt.size, claimed: new Date().toISOString() }
   writeHandoff(root, opt, 'prepare', state)
   output({ skip: 'false', branch, ref: onRemote ? branch : base })
   return state
@@ -324,8 +326,10 @@ async function shipBuild(opt, root, config, state) {
   if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
   const dir = runDir(root, `ship-${opt.n}`)
   const t = state.issue
+  // An earlier attempt's commits, pushed or only local, are to be built on.
+  const before = Number((await git(['rev-list', '--count', `origin/${base}..HEAD`], { cwd: workdir })).stdout.trim() || 0)
   const result = await runCopilot(root, config, 'harness-ship', {
-    issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir, continuing: Boolean(onRemote),
+    issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir, continuing: onRemote || before > 0,
     ...(state.notes ? { notes: state.notes } : {}), ...(state.size ? { size: state.size } : {}),
   }, dir, workdir)
   result.issue ??= opt.n
@@ -362,7 +366,7 @@ async function shipPublish(opt, root, config, state, built) {
   // that job: which issue, branch and title this is comes from the claim.
   Object.assign(result, { issue: n, branch, title: state.issue && state.issue.title })
   if (result.outcome === 'declined' || result.outcome === 'error') {
-    await GH.comment(n, shipIssueComment(result), root)
+    await GH.comment(n, shipIssueComment(result, '', state.claimed), root)
     await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
     return result
   }
@@ -383,7 +387,7 @@ async function shipPublish(opt, root, config, state, built) {
   const edits = ahead > 0 ? await workflowEdits(`origin/${base}`, ref, cwd) : []
   if (edits.length) {
     Object.assign(result, { outcome: 'handback', phase: 'PR', reason: `the change edits ${edits.join(', ')}; the harness never pushes workflow files, so a person must apply it (the run's artifact holds the commits)` })
-    await GH.comment(n, shipIssueComment(result), root)
+    await GH.comment(n, shipIssueComment(result, '', state.claimed), root)
     await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
     return result
   }
@@ -410,7 +414,7 @@ async function shipPublish(opt, root, config, state, built) {
       await GH.dispatch(config.github.reviewWorkflow, { pr: prNumber }, root).catch((e) => console.error(`could not start the review: ${e.message}`))
     }
   }
-  await GH.comment(n, shipIssueComment(result, url), root)
+  await GH.comment(n, shipIssueComment(result, url, state.claimed), root)
   await GH.relabel(n, { add: [result.outcome === 'pr' ? L.done : L.stuck], remove: [L.working] }, root)
   return result
 }
@@ -448,9 +452,11 @@ async function reviewPrepare(opt, root, config) {
   if (p.isCrossRepository) return skip(`#${opt.n} comes from a fork — the harness does not run code from forks`)
   const linked = (p.closingIssuesReferences || [])[0]
   const t = linked ? await GH.issue(linked.number, root).catch(() => null) : null
+  // An answer to a hand-back amends the ticket the change was built to.
+  const { answer } = t ? await GH.answerSince(t.comments, SHIP_MARKER, (login, c) => GH.writer(login, c, root), await GH.whoami(root)) : { answer: '' }
   const state = {
     pr: opt.n, title: p.title, body: p.body || '', base: p.baseRefName, labels: p.labels,
-    ...(t ? { ticket: { number: t.number, title: t.title, body: t.body || '' } } : {}),
+    ...(t ? { ticket: { number: t.number, title: t.title, body: (t.body || '') + (answer ? `\n\n${answer}` : '') } } : {}),
   }
   writeHandoff(root, opt, 'prepare', state)
   output({ skip: 'false', ref: `refs/pull/${opt.n}/head` })

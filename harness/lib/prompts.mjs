@@ -28,8 +28,9 @@ export const ticketText = (a) =>
 export const continuing = (a, specPath) => a.continuing
   ? `This branch carries an earlier attempt at this ticket, which a person handed back (their answer, if any, is ` +
     `in the notes above). Build on it: keep ${specPath} and change it only where the ticket or the answer ` +
-    `requires, recording why under *Decisions*; tests already committed may pass already, and that is fine. ` +
-    `Do not start over.\n\n`
+    `requires, recording why under *Decisions*; tests already committed may pass already, and that is fine — ` +
+    `"a test that fails" means one that fails on the base, not on this branch; where the answer changes the ` +
+    `behaviour, the earlier attempt's own tests may change with it. Do not start over.\n\n`
   : ''
 
 export const criteria = (doneWhen) => `Done when:\n${doneWhen.map((c) => `- ${c}`).join('\n')}`

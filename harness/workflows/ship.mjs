@@ -172,7 +172,7 @@ export async function run(ctx, { config, deps = realDeps }) {
   for (let round = 1; round <= T.specRounds; round++) {
     ctx.phase('Spec Audit')
     const res = await audit(specLenses, (l, retry) => ctx.agent(
-      `${COMMON}\n\n${ticket}\n\n${P.specAuditAsk({ lensAsk: l.ask, specPath: spec.path })}`,
+      `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.specAuditAsk({ lensAsk: l.ask, specPath: spec.path })}`,
       { label: `spec-audit:${l.key}${retry}#${round}`, schema: FINDINGS, model: m(T.think) },
     ))
     if (res.missing.length) return handBack('Spec Audit', `the ${res.missing.join(', ')} auditor could not finish`)
@@ -301,10 +301,12 @@ export async function run(ctx, { config, deps = realDeps }) {
     if (audited >= T.buildRounds || round >= T.buildRounds + 2) return handBack('Code Audit', `still not clean after ${round} rounds`, open)
 
     const fixed = await ctx.agent(
-      `${COMMON}\n\n${ticket}\n\n${P.fixAsk(config, spec.path, open, listFindings)}`,
+      `${COMMON}\n\n${ticket}\n\n${P.continuing(a, spec.path)}${P.fixAsk(config, spec.path, open, listFindings)}`,
       { label: `fix#${round}`, schema: DONE, model: m(T.build) },
     )
-    if (!fixed) return handBack('Code Audit', 'the fixer did not finish', open)
+    // A fixer that says it cannot resolve them is believed: another gate and
+    // audit would only confirm it.
+    if (!fixed || !fixed.ok) return handBack('Code Audit', fixed ? `the fixer could not resolve them: ${fixed.summary}` : 'the fixer did not finish', open)
   }
 
   // ── 7. Learn ───────────────────────────────────────────────────────────────

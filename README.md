@@ -17,7 +17,7 @@ issue labelled ready-for-ai
   │
   ├─ 1. claim job (run.mjs prepare)    read the issue, claim it, pick the branch
   │
-  ├─ 2. build job: copilot workflow run harness-ship    headless; no GitHub token in the job
+  ├─ 2. build job: copilot workflow run harness-ship    headless; the agents get no GitHub token
   │      Setup        reads the ticket and the code, reports sizing facts
   │      Spec         specs/<n>-<slug>.md, its own commit
   │      Spec audit   fresh auditors ⇄ revise (only when the ticket's risk calls for it)
@@ -49,15 +49,16 @@ These are why each piece exists. Keep them when you change the harness.
   "fix" correct code. A skeptic that dies refutes nothing.
 - **Hand back rather than burn rounds.** The same finding surviving two fixes, or the round limit,
   ends the run with a draft PR and the open findings. A collaborator's answer in a comment, followed by
-  the label again, reaches the next run, which continues on the same branch.
+  the label again, reaches the next run, which continues on the same branch. Only comments from people
+  with write access are read.
 - **Sized by risk, not length.** Setup reports facts; one rule turns them into a loop. Small is the
   base, and a business rule, stored data or the harness itself buys the full loop. The diff can
   escalate a small run on evidence.
 - **The project's rules stay the project's.** Agents are pointed at your existing instruction files.
   The harness never restates them.
 - **AI never holds the GitHub token.** In Actions, ship and review are three jobs each. Claiming and
-  publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
-  with no repository access, and the agents run there as a user of their own that can't sudo and
+  publishing hold the GitHub token. In the build job, a read-only token is used only to check out and
+  set up; the agents get only a Copilot token with no repository access, and run as a user of their own that can't sudo and
   owns nothing the job's other steps use. Ship runs the default branch's harness and review the
   pull request base's, and the branch is only the workspace the agents edit. The work crosses to publish as a git bundle, and workflow files are never
   pushed. On a laptop there is no such isolation (harness/ADAPTING.md §9).

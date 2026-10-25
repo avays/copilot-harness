@@ -41,16 +41,32 @@ export async function syncBase(base, cwd) {
   return { sync: 'conflict', conflicts: conflicts.length ? conflicts : [ref] }
 }
 
-/** The size and reach of a diff, from numstat: what escalation and review sizing read. */
-export function diffFacts(numstat, config) {
+/**
+ * `git diff --numstat -z`: "add\tdel\tpath\0", or for a rename
+ * "add\tdel\t\0old\0new\0". -z, so no path is quoted (a quoted path would
+ * match no prefix); both sides of a rename, so moving a file out of a
+ * risky folder counts as touching it.
+ */
+export function numstatEntries(z) {
+  const parts = z.split('\0'), out = []
+  for (let i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue
+    const [add, del, path] = parts[i].split('\t')
+    if (path) out.push({ add, del, paths: [path] })
+    else { out.push({ add, del, paths: [parts[i + 1], parts[i + 2]] }); i += 2 }
+  }
+  return out
+}
+
+/** The size and reach of a diff, from numstat -z: what escalation and review sizing read. */
+export function diffFacts(numstatZ, config) {
   let appLines = 0, testLines = 0
   const files = [], risky = []
-  for (const line of numstat.split('\n').filter(Boolean)) {
-    const [add, del, ...rest] = line.split('\t')
-    // A rename prints as prefix/{old => new}/suffix, or old => new.
-    const file = rest.join('\t').replace(/\{([^{}]*) => ([^{}]*)\}/, '$2').replace(/^.* => /, '').replace(/\/{2,}/g, '/')
+  for (const { add, del, paths } of numstatEntries(numstatZ)) {
+    const file = paths.at(-1)
     files.push(file)
-    if (under(file, config.paths.risky)) risky.push(file)
+    const hit = paths.find((p) => under(p, config.paths.risky))
+    if (hit) risky.push(hit)
     if (under(file, config.paths.source)) appLines += (Number(add) || 0) + (Number(del) || 0)
     else if (under(file, config.paths.tests)) testLines += (Number(add) || 0) + (Number(del) || 0)
   }
@@ -58,7 +74,7 @@ export function diffFacts(numstat, config) {
 }
 
 export async function facts(base, cwd, config) {
-  return diffFacts((await git(['diff', '--numstat', `${base}...HEAD`], { cwd })).stdout, config)
+  return diffFacts((await git(['diff', '--numstat', '-z', `${base}...HEAD`], { cwd })).stdout, config)
 }
 
 /**
@@ -82,5 +98,5 @@ export function tamperedFrom(patch, config) {
 }
 
 export async function tampered(base, cwd, config) {
-  return tamperedFrom((await git(['diff', '-U0', `${base}...HEAD`, '--', ...config.paths.tests], { cwd })).stdout, config)
+  return tamperedFrom((await git(['-c', 'core.quotePath=false', 'diff', '-U0', `${base}...HEAD`, '--', ...config.paths.tests], { cwd })).stdout, config)
 }

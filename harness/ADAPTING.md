@@ -132,7 +132,8 @@ commands: {
 - **`gate`** is the definition of green. Every command must exit 0. Put everything a reviewer would ask
   for here: tests, static checks, the formatter in check mode. It runs every round, so several gates,
   plus the agents' time, must fit inside `copilot.timeoutMinutes` (100 by default; keep it below the
-  build job's `timeout-minutes`, 120).
+  build job's `timeout-minutes`, 120). A review's Copilot run has its own `review.timeoutMinutes` (35;
+  keep it below the review job's 45), which matters if reviewers build.
 - **Multi-module builds:** the report folders are searched one module level deep. For a migration where
   the Spring Boot app is a module of the legacy build, consider gating only that module
   (`./mvnw -B -ntp -pl app -am verify`) if the legacy modules are slow or need a server.
@@ -149,6 +150,8 @@ commands: {
   command's `--preserve-env=` list. In `harness-ship.yml` (and in `harness-review.yml`, if reviewers
   build):
 
+  Three additions, nothing else in the step changes:
+
   ```yaml
   - uses: actions/setup-java@v4
     with:
@@ -157,14 +160,14 @@ commands: {
       server-id: company-maven            # the <id> in your pom's <repository>
       server-username: MAVEN_USER         # names of env vars, not values
       server-password: MAVEN_TOKEN
-  # …
-  - name: Build
+
+  - name: Build                           # "Review" in harness-review.yml
     env:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      MAVEN_USER: ${{ secrets.MAVEN_USER }}
-      MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}
-    run: |
-      sudo -n -u harness-agent --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME,MAVEN_USER,MAVEN_TOKEN -- …
+      MAVEN_USER: ${{ secrets.MAVEN_USER }}            # added
+      MAVEN_TOKEN: ${{ secrets.MAVEN_READ_TOKEN }}     # added
+    # …and in its run: line, append ",MAVEN_USER,MAVEN_TOKEN" to the existing
+    # --preserve-env=COPILOT_GITHUB_TOKEN,GITHUB_ACTIONS,ISSUE,JAVA_HOME list.
   ```
 
   `copilot.extensionEnv` doesn't apply here: it concerns what Copilot passes on to its extension, and the
@@ -321,7 +324,7 @@ behaviour you change.
 **Proved, and re-proved by a command you can run:**
 
 - The ship and review loops: sizing, escalation, the skeptic, stuck detection, round limits, red rounds,
-  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 122 tests
+  conflicts, extra lenses, hand-backs and Learn. `node --test harness/test/*.test.mjs` runs 126 tests
   against a fake Copilot context and real git repositories. While building it, about sixty mutations
   of the loop were tried by hand; each behaviour a surviving mutation exposed got a test.
 - The gate, red-check and base-sync, against a real git repository, by the same tests. So is the agents'
@@ -396,8 +399,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   can't make the upload read the runner's own environment. The uploads read that copy.
 - **No GitHub credential in the agents' reach.** The build job's read-only token is used only by the
   checkout and setup actions, and only `COPILOT_GITHUB_TOKEN` is passed to the agents' user. Ship's
-  trusted checkouts are pinned to the default branch, and review's to the pull request's base. So a run
-  started by hand from another branch still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
+  trusted checkouts are pinned to the default branch. Review's are pinned to the pull request's base, or
+  to the default branch when the review is dispatched (as ship does without a PAT). So a run started by
+  hand from another branch still runs the default branch's harness. The job saves no cache. Claiming and publishing are separate
   jobs that never run branch code. The work crosses to publish as a git bundle. Publish takes the issue,
   branch and title from the claim (never from the build), checks where it is pushing, never pushes a
   workflow file, and makes agent-written text in the PR body inert (no closing keywords, no
@@ -410,6 +414,9 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   check, so make it a required status check. If the gate needs Docker (Testcontainers), the agents'
   user needs Docker access, and that is root: the boundary inside the job is then gone. Run that build
   in a container or VM of its own, or accept it for tickets from people you trust.
+- **Who can answer a hand-back.** The comments after the harness's hand-back reach the next run's agents
+  as part of their brief, so only people GitHub says can write to the repository are read. The others
+  are skipped, and the run's log names them.
 - **Who can start a run.** Anyone who can label an issue (triage access) can ship it, and its body is the
   agents' brief, so prompt injection arrives that way. Keep `ready-for-ai` to people who would review the
   result.
@@ -433,6 +440,11 @@ definitions (`doctor --live` fails if registration does), and the workflow files
   is kept.
 - **Inside a CI run, the base is fetched once.** The build job has no credentials, so the per-round merge
   of the base uses the copy the checkout fetched at the start of the job.
+- **A continued branch after the base's workflows changed.** Each round merges the base into the
+  branch, so a branch continued after `.github/workflows/` changed on the base carries those changes, and
+  GitHub may refuse to push them with `GITHUB_TOKEN` ("refusing to allow a GitHub App to create or update
+  workflow"). The run then ends as an error after its credits are spent. Delete the old harness branch,
+  or merge the base into it yourself, before relabelling.
 - **One ticket per run.** Several tickets run as several jobs. GitHub runs them in parallel, and each
   has its own runner.
 - **Windows:** use WSL or Git Bash. Gate commands and `gh` calls run through `bash`.

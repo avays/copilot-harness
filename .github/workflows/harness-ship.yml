@@ -7,8 +7,8 @@
 ##   publish — pushes, opens the PR, labels, comments            GitHub token
 ## An agent can read the environment of every process above it, so the only
 ## way to keep the GitHub token from agents is to keep it out of their job.
-## Every job runs the base branch's harness; the branch is only the workspace
-## the agents edit. The work crosses from build to publish as a git bundle.
+## Every job runs the default branch's harness; the branch is only the
+## workspace the agents edit. The work crosses from build to publish as a git bundle.
 ##
 ## Private Maven repository? See harness/ADAPTING.md §4: its credential goes in the
 ## Build step's env, and the agents can read it.
@@ -112,8 +112,9 @@ jobs:
       # ADAPT: the project's own toolchain and JDK. The gate in
       # harness.config.mjs runs here, so this must match what the project
       # builds with. No `cache:` — this job runs code the agents wrote, and a
-      # cache it saved would be restored by the project's other workflows. To
-      # speed it up, restore a cache without saving (actions/cache/restore).
+      # cache it saved would be restored by the project's other workflows. A
+      # restore-only cache (actions/cache/restore) is safe, but must be copied
+      # into /home/harness-agent/.m2/repository in "Isolate the agents".
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

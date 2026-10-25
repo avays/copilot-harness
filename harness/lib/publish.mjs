@@ -7,11 +7,12 @@ import { brief } from './findings.mjs'
 // close an unrelated issue when the PR merges, and an @mention would page
 // someone. A zero-width joiner keeps it readable and stops GitHub reading it.
 const ZWJ = '\u200d'
-// Code spans are left alone: GitHub links nothing inside them, and a path
-// or `@Test` there should stay copyable.
+// Everything is tamed, code spans too: matching GitHub's own idea of where
+// a code span starts and ends is fragile, and a joiner inside code is
+// harmless. File paths go through code() instead, untouched.
 const CLOSING = /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s*)(?=(?:[\w.-]+\/[\w.-]+)?#\d|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/gi
 const inert = (t) => t.replace(CLOSING, `$1${ZWJ}$2`).replace(/(?<![\w.`])@(?=[\w-])/g, `@${ZWJ}`)
-export const tame = (t) => String(t ?? '').split(/(`[^`]*`)/).map((part, i) => (i % 2 ? part : inert(part))).join('')
+export const tame = (t) => inert(String(t ?? ''))
 
 const code = (t) => `\`${String(t ?? '').replace(/`/g, "'")}\``
 const list = (fs) => fs.map((f) => `- **${f.category}** ${code(`${f.file}${f.line ? ':' + f.line : ''}`)} — ${tame(f.claim)}${f.fix ? `\n  *Fix:* ${tame(f.fix)}` : ''}`).join('\n')
@@ -72,10 +73,11 @@ export function shipPrBody(r) {
 
 // Marks the harness's own comments on an issue: the next run reads the
 // people's comments after the last one as their answer (run.mjs).
-export const SHIP_MARKER = '<!-- harness-ship -->'
+export const SHIP_MARKER = '<!-- harness-ship'
 
-export function shipIssueComment(r, url) {
-  return shipIssueText(r, url) + `\n\n${SHIP_MARKER}`
+/** `claimed`: when this run claimed the ticket; comments after it answer this one. */
+export function shipIssueComment(r, url, claimed = new Date().toISOString()) {
+  return shipIssueText(r, url) + `\n\n${SHIP_MARKER} claimed=${claimed} -->`
 }
 
 function shipIssueText(r, url) {
@@ -85,7 +87,9 @@ function shipIssueText(r, url) {
   return `Handed back to a person: **${tame(r.reason)}**${url ? ` — draft: ${url}` : ''}.` +
     (r.open && r.open.length ? `\n\nStill open:\n${list(r.open)}` : '') +
     (r.alsoOpen && r.alsoOpen.length ? `\n\nAlso unresolved:\n${list(r.alsoOpen)}` : '') +
-    `\n\nAnswer in a comment here, or edit the ticket, then label it again: the next run reads both, and continues on the same branch.`
+    (url
+      ? `\n\nAnswer in a comment here, or edit the ticket, then label it again: the next run reads both, and continues on the same branch.`
+      : `\n\nAnswer in a comment here, or edit the ticket, then label it again: the next run reads both. Nothing was pushed, so it starts over; the run's artifact holds what this one built.`)
 }
 
 export const REVIEW_MARKER = '<!-- harness-review -->'

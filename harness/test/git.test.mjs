@@ -147,7 +147,9 @@ test('a renamed file keeps its directory, so it still counts and still escalates
   const { facts } = await import('../lib/git.mjs')
   const f = await facts('origin/main', dir, config({ paths: { source: ['src/main/'], tests: ['src/test/'], risky: ['src/main/db/'] } }))
   assert.ok(f.appLines > 0)
-  assert.deepEqual(f.risky, ['src/main/db/new/V1.sql'])
+  // Both sides are under the risky folder; either one names it.
+  assert.equal(f.risky.length, 1)
+  assert.match(f.risky[0], /^src\/main\/db\//)
 })
 
 test('deleting a whole test file is flagged as tampering', async () => {

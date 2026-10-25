@@ -1,7 +1,8 @@
 ## Review a pull request against its ticket and the project's instructions.
 ## Independent lenses, a skeptic on every blocker, one comment with a verdict
-## and a confidence. Advisory: a review that cannot run is a warning, never a
-## red check, so it never blocks a merge — machines gate, agents advise.
+## and a confidence. Advisory: it is never a required check, so it never
+## blocks a merge — machines gate, agents advise. (A review that fails to
+## start, or whose isolation check fails closed, does show red.)
 ##
 ## It reviews every ready pull request from this repository, people's as well
 ## as the harness's, and each review spends AI credits. Narrow `on:` (a label,
@@ -89,7 +90,8 @@ jobs:
       # ADAPT: the project's toolchain and JDK, if reviewers should be able to
       # build or run a single test to prove a claim. Remove if they only read.
       # No `cache:`: this job runs the branch's code, and a cache it saved
-      # would be restored by other workflows. Restore-only is safe.
+      # would be restored by other workflows. Restore-only is safe, copied
+      # into /home/harness-agent/.m2/repository in "Isolate the agents".
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
