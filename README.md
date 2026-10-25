@@ -15,9 +15,9 @@ instructions and rules. **To adopt it, read [ADAPTING.md](ADAPTING.md).**
 ```
 issue labelled ready-for-ai
   │
-  ├─ 1. prepare (run.mjs: gh + git)    read the issue, claim it, make the branch
+  ├─ 1. claim job (run.mjs prepare)    read the issue, claim it, pick the branch
   │
-  ├─ 2. copilot workflow run harness-ship    headless, holds no GitHub token
+  ├─ 2. build job: copilot workflow run harness-ship    headless; no GitHub token in the job
   │      Setup        reads the ticket and the code, reports sizing facts
   │      Spec         specs/<n>-<slug>.md, its own commit
   │      Spec audit   fresh auditors ⇄ revise (only when the ticket's risk calls for it)
@@ -27,7 +27,7 @@ issue labelled ready-for-ai
   │      └─ Fix       the confirmed blockers; repeat until clean, or hand back
   │      Learn        what the audits caught becomes a lesson in the docs
   │
-  ├─ 3. publish (run.mjs: gh + git)    push, open the PR or a draft, label, comment
+  ├─ 3. publish job (run.mjs publish)    push the bundle, open the PR or a draft, label, comment
   │
   ├─ Harness · review    independent lenses → skeptic → one advisory comment
   │
@@ -54,10 +54,11 @@ These are why each piece exists. Keep them when you change the harness.
   escalate a small run on evidence.
 - **The project's rules stay the project's.** Agents are pointed at your existing instruction files.
   The harness never restates them.
-- **AI never holds the GitHub token.** The Copilot workflow commits locally. `run.mjs` pushes and
-  talks to GitHub, before and after. Every GitHub token is removed from the environment Copilot
-  starts in, and in Actions the checkout keeps no credentials. Git authenticates through `gh`, which
-  only `run.mjs` can use.
+- **AI never holds the GitHub token.** In Actions, ship and review are three jobs each. Claiming and
+  publishing hold the GitHub token. The build job, where the agents run, holds only a Copilot token
+  with no repository access. The work crosses between them as a git bundle, and is pushed by the base
+  branch's harness, never by code the agents wrote. Workflow files are never pushed. On a laptop
+  there is no such isolation (ADAPTING.md §9).
 - **Say what was not proved.** Every PR has a *Not verified* section. Review confidence means
   coverage, and a lens that never finished makes it *low*.
 
@@ -73,12 +74,12 @@ These are why each piece exists. Keep them when you change the harness.
 | `harness/lib/gate.mjs`, `red-check.mjs`, `git.mjs` | The commands that decide facts |
 | `harness/lib/sizing.mjs`, `findings.mjs` | Sizing rules; schemas and finding comparison |
 | `harness/lib/github.mjs`, `publish.mjs` | GitHub reads and writes; PR and comment bodies |
-| `harness/bin/run.mjs` | The entry point: prepare → `copilot workflow run` → publish |
+| `harness/bin/run.mjs` | The entry point: prepare → `copilot workflow run` → publish, in one go or one `--phase` at a time |
 | `harness/bin/doctor.mjs` | Readiness checks; `--live` runs the ping workflow |
 | `harness/templates/spec.md` | The spec shape |
 | `harness/test/` | Tests, run with a fake Copilot context and real git (no model, no network) |
 | `.github/extensions/harness/extension.mjs` | Registers the workflows with Copilot CLI |
-| `.github/workflows/harness-*.yml` | Ship on a label, review on a PR, one-off setup |
+| `.github/workflows/harness-*.yml` | Ship on a label and review on a PR (three jobs each), plus a one-off setup |
 
 ## Running it
 
@@ -88,6 +89,7 @@ node harness/bin/doctor.mjs --live     # runs harness-ping in Copilot: no agents
 node harness/bin/run.mjs ship 42 --no-publish   # a full local run: nothing pushed, posted or labelled
 node harness/bin/run.mjs ship 42                # claim, build, open the PR
 node harness/bin/run.mjs review 57
+node harness/bin/run.mjs ship 42 --phase prepare|build|publish  # one phase, as the Actions jobs run them
 node --test harness/test/*.test.mjs   # the harness's own tests, about a second
 ```
 

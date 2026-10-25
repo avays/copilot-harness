@@ -1,13 +1,18 @@
 ## Label an issue `ready-for-ai` and it becomes a verified pull request — or a
 ## draft handed to a person, with everything still open written down.
 ##
-## The job runs one command, harness/bin/run.mjs, which claims the ticket,
-## runs the `harness-ship` Copilot workflow headless, then pushes and opens the
-## pull request. The workflow is a script, not a prompt: its loops and round
-## limits are code (harness/workflows/ship.mjs).
+## Three jobs, and only the middle one runs agents:
+##   claim   — reads the issue, claims it, picks the branch      GitHub token
+##   build   — `copilot workflow run harness-ship`, headless     NO GitHub token
+##   publish — pushes, opens the PR, labels, comments            GitHub token
+## An agent can read the environment of every process above it, so the only
+## way to keep the GitHub token from agents is to keep it out of their job.
+## The work crosses from build to publish as a git bundle, and publish runs
+## the base branch's harness code, never the branch's.
 ##
 ## Needs: a COPILOT_GITHUB_TOKEN secret (fine-grained PAT, owned by a person,
-## with the "Copilot Requests" permission). ADAPTING.md §6 has the details.
+## with the "Copilot Requests" permission and no repository access).
+## ADAPTING.md §6 has the details.
 name: "Harness · ship"
 
 on:
@@ -23,30 +28,64 @@ on:
         required: false
         default: ""
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  actions: write # to start the review workflow once the pull request opens
+permissions: {}
+
+env:
+  ISSUE: ${{ github.event.issue.number || inputs.issue }}
 
 jobs:
-  ship:
+  claim:
     # ADAPT: the label must match github.labels.ready in harness.config.mjs.
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-ai'
     # One run per ticket, at the job level so only runs that pass the `if`
-    # join the group. At the workflow level every label event on the issue
-    # would join it, and a newer no-op could cancel the real run while it waits.
+    # join the group: at the workflow level every label event on the issue
+    # would, and a newer no-op could cancel the real run while it waits.
     concurrency:
       group: harness-ship-${{ github.event.issue.number || inputs.issue }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.prepare.outputs.skip }}
+      ref: ${{ steps.prepare.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Claim
+        id: prepare
+        env:
+          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
+          SIZE: ${{ inputs.size }}
+        run: |
+          gh auth setup-git
+          node harness/bin/run.mjs ship "$ISSUE" --phase prepare ${SIZE:+--$SIZE}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handoff-claim
+          path: .harness/handoff/
+          include-hidden-files: true
+          retention-days: 3
+
+  build:
+    needs: claim
+    if: needs.claim.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Read-only, and no step below is given a GitHub token.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.claim.outputs.ref }}
           fetch-depth: 0
-          # No token left in .git/config: the agents run git and must not be
-          # able to push. run.mjs authenticates through gh instead (below).
           persist-credentials: false
 
       # ADAPT: the project's own toolchain and JDK. The gate in
@@ -66,33 +105,71 @@ jobs:
       - name: Install Copilot CLI
         run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
 
-      # git's credential helper asks gh, and gh needs GH_TOKEN — which
-      # run.mjs has and strips from the agents' environment.
-      - name: Commit as the harness, authenticate git through gh
-        env:
-          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
-        run: |
-          gh auth setup-git
-          git config user.name "harness[bot]"
-          git config user.email "harness@users.noreply.github.com"
+      - uses: actions/download-artifact@v4
+        with:
+          name: handoff-claim
+          path: .harness/handoff/
 
-      - name: Ship
+      - name: Build
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-          # A PAT lets the pull request start the project's other workflows
-          # (CI) by itself, and push changes to .github/workflows/.
-          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
-          HARNESS_USES_PAT: ${{ secrets.HARNESS_GH_TOKEN != '' }}
-          ISSUE: ${{ github.event.issue.number || inputs.issue }}
-          SIZE: ${{ inputs.size }}
-        run: node harness/bin/run.mjs ship "$ISSUE" ${SIZE:+--$SIZE}
+        run: |
+          git config user.name "harness[bot]"
+          git config user.email "harness@users.noreply.github.com"
+          node harness/bin/run.mjs ship "$ISSUE" --phase build
 
-      - name: Keep the run folder
+      # Only this run's own files: the claim's are already in its artifact.
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: harness-ship-${{ github.event.issue.number || inputs.issue }}
+          name: handoff-build
+          path: |
+            .harness/handoff/ship-*.build.json
+            .harness/handoff/ship-*.bundle
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harness-ship-runs
           path: .harness/runs/
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore
+
+  publish:
+    needs: [claim, build]
+    # Even when build failed or timed out: publish says so on the issue,
+    # so the ticket is never left claimed with nobody working on it.
+    if: always() && needs.claim.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: write # to start the review workflow once the pull request opens
+    steps:
+      # The base branch, so the code that holds the token is the reviewed
+      # harness, not anything the agents wrote.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: handoff-*
+          path: .harness/handoff/
+          merge-multiple: true
+      - name: Publish
+        env:
+          # A PAT lets the pull request start the project's other workflows
+          # (CI) by itself.
+          GH_TOKEN: ${{ secrets.HARNESS_GH_TOKEN || github.token }}
+          HARNESS_USES_PAT: ${{ secrets.HARNESS_GH_TOKEN != '' }}
+        run: |
+          gh auth setup-git
+          node harness/bin/run.mjs ship "$ISSUE" --phase publish

@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { loadConfig } from '../lib/config.mjs'
-import { copilotArgv, copilotEnv } from './run.mjs'
+import { repoEnv } from '../lib/github.mjs'
+import { copilotArgv, copilotEnv, readEvents } from './run.mjs'
 
 const live = process.argv.includes('--live')
 const results = []
@@ -17,6 +18,9 @@ const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', .
 
 const top = run('git', ['rev-parse', '--show-toplevel'])
 const root = top.status === 0 ? top.stdout.trim() : process.cwd()
+// gh pinned to origin, as run.mjs pins it: without a terminal gh prefers an
+// `upstream` remote, and every check below would read the wrong repository.
+const ghEnv = { ...process.env, ...(await repoEnv(root)) }
 check('inside a git repository', top.status === 0, root)
 
 const [major] = process.versions.node.split('.').map(Number)
@@ -45,8 +49,9 @@ if (config) {
   check('red-check is configured', Boolean(config.commands.testsOnly), config.commands.testsOnly ? '' : 'commands.testsOnly is null: tests that prove nothing go unnoticed')
   check('the extension is present', existsSync(join(root, '.github/extensions/harness/extension.mjs')))
   check('the spec template is present', existsSync(join(root, 'harness/templates/spec.md')))
-  const todo = readFileSync(join(root, 'harness.config.mjs'), 'utf8').match(/TODO/g)
-  check('no TODOs left in harness.config.mjs', !todo, todo ? `${todo.length} left` : '')
+  // Placeholders are written `TODO:`; the word on its own in a comment is not one.
+  const todo = readFileSync(join(root, 'harness.config.mjs'), 'utf8').match(/TODO:/g)
+  check('no TODO: placeholders left in harness.config.mjs', !todo, todo ? `${todo.length} left` : '')
 }
 
 const cop = run(config ? config.copilot.bin : 'copilot', ['--version'], { shell: process.platform === 'win32' })
@@ -59,7 +64,7 @@ check('something Copilot can sign in with', Boolean(process.env.COPILOT_GITHUB_T
   process.env.COPILOT_GITHUB_TOKEN ? 'COPILOT_GITHUB_TOKEN is set' : ghAuth.status === 0 ? 'a gh sign-in' : 'COPILOT_GITHUB_TOKEN in CI; `copilot login` on a laptop')
 
 if (config) {
-  const labels = run('gh', ['label', 'list', '--limit', '200', '--json', 'name', '--jq', '.[].name'], { cwd: root })
+  const labels = run('gh', ['label', 'list', '--limit', '200', '--json', 'name', '--jq', '.[].name'], { cwd: root, env: ghEnv })
   if (labels.status === 0) {
     const have = new Set(labels.stdout.split('\n'))
     const missing = Object.values(config.github.labels).filter((l) => !have.has(l))
@@ -67,8 +72,9 @@ if (config) {
   }
   // Opening a pull request with GITHUB_TOKEN needs this repository setting.
   // Reading it needs admin rights, so an unreadable answer is not a failure.
-  const perms = run('gh', ['api', 'repos/{owner}/{repo}/actions/permissions/workflow', '--jq', '.can_approve_pull_request_reviews'], { cwd: root })
-  if (perms.status === 0) {
+  const perms = run('gh', ['api', 'repos/{owner}/{repo}/actions/permissions/workflow', '--jq', '.can_approve_pull_request_reviews'], { cwd: root, env: ghEnv })
+  // A PAT opens pull requests as a person, so the setting does not apply.
+  if (perms.status === 0 && !process.env.HARNESS_GH_TOKEN && process.env.HARNESS_USES_PAT !== 'true') {
     check('Actions may create pull requests', perms.stdout.trim() === 'true',
       perms.stdout.trim() === 'true' ? '' : 'Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests" (or set HARNESS_GH_TOKEN)')
   }
@@ -81,7 +87,9 @@ if (live && config && cop.status === 0) {
   const i = argv.indexOf('--args'); argv.splice(i, 2)
   const r = run(config.copilot.bin, argv, { cwd: root, env: copilotEnv(process.env), shell: process.platform === 'win32' })
   const ok = r.status === 0 && existsSync(join(dir, 'result.json'))
-  check('copilot workflow run harness-ping', ok, ok ? readFileSync(join(dir, 'result.json'), 'utf8').replace(/\s+/g, ' ').slice(0, 200)
+  const { usage } = readEvents(r.stdout || '')
+  const spent = usage ? ` · ${usage.aiCredits} AI credits, ${usage.subagents} agents` : ''
+  check('copilot workflow run harness-ping', ok, ok ? readFileSync(join(dir, 'result.json'), 'utf8').replace(/\s+/g, ' ').slice(0, 200) + spent
     : `exit ${r.status}: ${(r.stderr || r.stdout || '').trim().split('\n').slice(-3).join(' | ')}`)
 }
 

@@ -1,15 +1,15 @@
 ## Review a pull request against its ticket and the project's instructions.
 ## Independent lenses, a skeptic on every blocker, one comment with a verdict
-## and a confidence. Advisory: it never fails the check, so it never blocks a
-## merge — machines gate, agents advise.
+## and a confidence. Advisory: a review that cannot run is a warning, never a
+## red check, so it never blocks a merge — machines gate, agents advise.
 ##
 ## It reviews every ready pull request from this repository, people's as well
 ## as the harness's, and each review spends AI credits. Narrow `on:` (a label,
 ## a branch prefix) if that is not what the team wants.
 ##
-## Security: the Copilot extension that runs is the one on the checked-out
-## branch. That is why pull requests from forks are skipped — their code would
-## run with this repository's Copilot token.
+## As in ship, the job that runs agents holds no GitHub token. It does run the
+## harness code on the pull request's branch, with the Copilot token, so pull
+## requests from forks are never reviewed.
 name: "Harness · review"
 
 on:
@@ -21,13 +21,13 @@ on:
         description: Pull request number
         required: true
 
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
+permissions: {}
+
+env:
+  PR: ${{ github.event.pull_request.number || inputs.pr }}
 
 jobs:
-  review:
+  prepare:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (!github.event.pull_request.draft &&
@@ -36,12 +36,45 @@ jobs:
       group: harness-review-${{ github.event.pull_request.number || inputs.pr }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.prepare.outputs.skip }}
+      ref: ${{ steps.prepare.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prepare
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Also skips a dispatched review of a pull request from a fork.
+        run: node harness/bin/run.mjs review "$PR" --phase prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-handoff-prepare
+          path: .harness/handoff/
+          include-hidden-files: true
+          retention-days: 3
+
+  review:
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', inputs.pr) }}
           persist-credentials: false
 
       # ADAPT: the project's toolchain and JDK, if reviewers should be able to
@@ -59,24 +92,53 @@ jobs:
       - name: Install Copilot CLI
         run: npm install -g "@github/copilot@${{ vars.COPILOT_CLI_VERSION || '1.0.103' }}"
 
-      - name: Authenticate git through gh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh auth setup-git
+      - uses: actions/download-artifact@v4
+        with:
+          name: review-handoff-prepare
+          path: .harness/handoff/
 
       - name: Review
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number || inputs.pr }}
-        run: node harness/bin/run.mjs review "$PR"
+        run: |
+          # A branch from before the harness was adopted has nothing to run.
+          if [ ! -f harness/bin/run.mjs ]; then
+            echo "::notice::This branch does not carry the harness; merge the base into it to review."
+            exit 0
+          fi
+          node harness/bin/run.mjs review "$PR" --phase build
 
-      - name: Keep the run folder
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: harness-review-${{ github.event.pull_request.number || inputs.pr }}
-          path: .harness/runs/
+          name: review-handoff-build
+          path: .harness/handoff/review-*.build.json
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: ignore
+
+  publish:
+    needs: [prepare, review]
+    if: always() && needs.prepare.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # The base branch's harness posts the comment, not the PR's.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: review-handoff-*
+          path: .harness/handoff/
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node harness/bin/run.mjs review "$PR" --phase publish

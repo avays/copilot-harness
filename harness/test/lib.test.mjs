@@ -152,9 +152,29 @@ test('the agents\' environment carries no GitHub token, only Copilot\'s own', ()
   assert.equal(env.PATH, '/bin')
 })
 
+test('the agents\' environment turns off git credential helpers, prompts and the ssh agent', () => {
+  const env = copilotEnv({ SSH_AUTH_SOCK: '/tmp/agent', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.editor', GIT_CONFIG_VALUE_0: 'vi' })
+  assert.equal(env.SSH_AUTH_SOCK, undefined)
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0')
+  assert.equal(env.GIT_CONFIG_COUNT, '2')
+  assert.equal(env.GIT_CONFIG_KEY_0, 'core.editor')
+  assert.equal(env.GIT_CONFIG_KEY_1, 'credential.helper')
+  assert.equal(env.GIT_CONFIG_VALUE_1, '')
+})
+
 test('a draft lists why it stopped and what else is unresolved', () => {
   const body = shipPrBody({ outcome: 'handback', issue: 7, reason: 'the ticket itself is in question', phase: 'Code Audit',
     open: [blocker({ category: 'scope' })], alsoOpen: [blocker({ claim: 'off by one' })], rounds: [], specRounds: [] })
   assert.match(body, /## Still open[\s\S]*scope/)
   assert.match(body, /## Also unresolved[\s\S]*off by one/)
+})
+
+test('the config refuses a tier lens that does not exist', () => {
+  assert.throws(() => config({ tiers: { small: { codeLenses: ['combind'] } } }), /codeLenses names "combind"/)
+  assert.doesNotThrow(() => config({ tiers: { full: { codeLenses: ['criteria', 'parity'] } }, lenses: { code: [{ key: 'parity', ask: 'x' }], spec: [] } }))
+})
+
+test('every pull request has a Not verified section', () => {
+  const body = shipPrBody({ outcome: 'pr', issue: 7, title: 't', branch: 'b', gate: { line: 'ok' }, rounds: [], specRounds: [], notVerified: [] })
+  assert.match(body, /## Not verified\n\n- Nothing beyond/)
 })

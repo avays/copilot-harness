@@ -12,7 +12,7 @@ const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
 // prefers a remote named `upstream`, so a forked clone would otherwise read
 // the upstream's issues and open pull requests there.
 let pinned = null
-async function repoEnv(cwd) {
+export async function repoEnv(cwd) {
   if (process.env.GH_REPO) return {}
   if (pinned === null) {
     const url = (await sh('git remote get-url origin', { cwd })).stdout.trim()
@@ -41,7 +41,7 @@ export const issue = (n, cwd) =>
     .then((i) => ({ ...i, labels: (i.labels || []).map((l) => l.name) }))
 
 export const pr = (n, cwd) =>
-  gh(`pr view ${Number(n)} --json number,title,body,baseRefName,headRefName,isDraft,labels,url,closingIssuesReferences`, { cwd, json: true })
+  gh(`pr view ${Number(n)} --json number,title,body,baseRefName,headRefName,isDraft,isCrossRepository,labels,url,closingIssuesReferences`, { cwd, json: true })
     .then((p) => ({ ...p, labels: (p.labels || []).map((l) => l.name) }))
 
 export const openPrFor = async (branch, cwd) =>

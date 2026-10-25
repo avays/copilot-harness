@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 // The one entry point, on a laptop and in GitHub Actions alike:
 //
-//   node harness/bin/run.mjs ship <issue> [--full|--small] [--notes "…"] [--no-publish]
-//   node harness/bin/run.mjs review <pr> [--no-publish]
+//   node harness/bin/run.mjs ship <issue> [--full|--small] [--notes "…"] [--no-publish] [--phase P]
+//   node harness/bin/run.mjs review <pr> [--no-publish] [--phase P]
 //
-// Three steps, and only the middle one is AI:
-//   1. prepare — read the ticket, claim it, make the branch (gh + git)
-//   2. run     — `copilot workflow run harness-ship|harness-review`, headless
-//   3. publish — push, open the pull request, label, comment (gh + git)
-// The workflow inside Copilot never holds a GitHub token and never pushes.
+// Three phases, and only the middle one is AI:
+//   prepare — read the ticket or PR, claim it, choose the branch   (needs a GitHub token)
+//   build   — `copilot workflow run harness-ship|harness-review`   (must have NO GitHub token)
+//   publish — push, open the pull request, label, comment          (needs a GitHub token)
+//
+// Without --phase all three run in turn (a laptop). In Actions each is its
+// own job, handing off through .harness/handoff/: an agent can read the
+// environment of any process above it, so the only way to keep the GitHub
+// token from the agents is for no process in the build job to hold it.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfig } from '../lib/config.mjs'
@@ -55,13 +59,34 @@ export function readEvents(jsonl) {
   return { status, usage }
 }
 
+// Tokens the agents must never see. Copilot signs in with
+// COPILOT_GITHUB_TOKEN, which should carry no repository access (ADAPTING §6).
+const GITHUB_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'HARNESS_GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
+
+/**
+ * The environment Copilot, and so every agent, starts in. In Actions the
+ * build job holds no GitHub token at all; this is the second layer. On a
+ * laptop it is the only one, and it is not isolation: an agent running as
+ * you can still read your stored credentials (ADAPTING §9). It does turn
+ * off git's credential helpers and prompts, so an ordinary `git push` fails.
+ */
+export function copilotEnv(env) {
+  const out = { ...env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false', GIT_TERMINAL_PROMPT: '0' }
+  for (const k of [...GITHUB_TOKENS, 'SSH_AUTH_SOCK']) delete out[k]
+  // An empty credential.helper resets the helper list for every git call.
+  const n = Number(out.GIT_CONFIG_COUNT || 0)
+  Object.assign(out, { GIT_CONFIG_COUNT: String(n + 1), [`GIT_CONFIG_KEY_${n}`]: 'credential.helper', [`GIT_CONFIG_VALUE_${n}`]: '' })
+  return out
+}
+
 function parseArgv(argv) {
   const [cmd, num, ...rest] = argv
-  const opt = { cmd, n: Number(String(num || '').replace(/^#/, '')), size: null, notes: '', publish: true }
+  const opt = { cmd, n: Number(String(num || '').replace(/^#/, '')), size: null, notes: '', publish: true, phase: null }
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--full' || rest[i] === '--small') opt.size = rest[i].slice(2)
     else if (rest[i] === '--notes') opt.notes = rest[++i] || ''
     else if (rest[i] === '--no-publish') opt.publish = false
+    else if (rest[i] === '--phase') opt.phase = rest[++i]
   }
   return opt
 }
@@ -72,30 +97,36 @@ async function repoRoot() {
   return r.stdout.trim()
 }
 
-/** .harness/ holds run folders and local worktrees; it ignores itself. */
-function runDir(root, name) {
-  const dir = join(root, '.harness', 'runs', `${name}-${new Date().toISOString().replace(/[:.]/g, '-')}`)
+/** .harness/ holds hand-offs, run folders and local worktrees; it ignores itself. */
+function harnessDir(root, ...sub) {
+  const dir = join(root, '.harness', ...sub)
   mkdirSync(dir, { recursive: true })
   const ignore = join(root, '.harness', '.gitignore')
   if (!existsSync(ignore)) writeFileSync(ignore, '*\n')
   return dir
 }
 
+const runDir = (root, name) => harnessDir(root, 'runs', `${name}-${new Date().toISOString().replace(/[:.]/g, '-')}`)
+
+// One file per phase, so the artifacts of separate jobs never overwrite
+// each other when they are downloaded into one folder.
+const handoffFile = (root, opt, phase) => join(harnessDir(root, 'handoff'), `${opt.cmd}-${opt.n}.${phase}.json`)
+const writeHandoff = (root, opt, phase, data) => writeFileSync(handoffFile(root, opt, phase), JSON.stringify(data, null, 2))
+const readHandoff = (root, opt, phase) => {
+  const f = handoffFile(root, opt, phase)
+  return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null
+}
+
+/** Values the next Actions job needs, as step outputs. */
+function output(values) {
+  if (!process.env.GITHUB_OUTPUT) return
+  appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(values).map(([k, v]) => `${k}=${v}\n`).join(''))
+}
+
 async function must(args, cwd, what) {
   const r = await git(args, { cwd })
   if (r.code !== 0) throw new Error(`${what}: ${r.out.trim()}`)
   return r.stdout.trim()
-}
-
-// Tokens the agents must never see. Copilot authenticates with
-// COPILOT_GITHUB_TOKEN, which it redacts itself; a GitHub token in an agent's
-// shell would let it push or write to GitHub on its own.
-const GITHUB_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'HARNESS_GH_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
-
-export function copilotEnv(env) {
-  const out = { ...env, GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS: 'true', COPILOT_AUTO_UPDATE: 'false' }
-  for (const k of GITHUB_TOKENS) delete out[k]
-  return out
 }
 
 /** Run the workflow headless; the result file, or an error result. */
@@ -130,28 +161,20 @@ function runCopilot(config, workflow, args, dir, cwd) {
 }
 
 /**
- * Push what the run built. In Actions the checkout keeps no credentials
- * (persist-credentials: false) and git authenticates through `gh auth
- * setup-git`, which needs GH_TOKEN — present here, stripped from the agents'
- * environment. So this can push, and nothing an agent runs can.
- */
-async function push(workdir, branch) {
-  const r = await git(['push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: workdir })
-  if (r.code === 0) return
-  const why = /refusing to allow .* workflow/i.test(r.out)
-    ? 'the change edits .github/workflows/, which GITHUB_TOKEN may not push — set a HARNESS_GH_TOKEN with the workflow scope (ADAPTING.md §6)'
-    : r.out.trim().split('\n').slice(-3).join(' ')
-  throw new Error(`git push: ${why}`)
-}
-
-/**
  * The branch for an issue: the one an earlier attempt pushed, if any, so a
  * renamed ticket continues where it stopped instead of starting a second PR.
+ * Of several, the one with an open pull request.
  */
 async function branchFor(n, title, root) {
-  const heads = (await git(['ls-remote', '--heads', 'origin', `harness/${n}-*`], { cwd: root })).stdout
-  const found = heads.split('\n').map((l) => l.split('\trefs/heads/')[1]).filter(Boolean)
-  return { branch: found[0] || `harness/${n}-${slug(title)}`, onRemote: found.length > 0 }
+  const r = await git(['ls-remote', '--heads', 'origin', `harness/${n}-*`], { cwd: root })
+  if (r.code !== 0) throw new Error(`git ls-remote: ${r.out.trim()}`)
+  // ls-remote patterns match the end of a ref: keep only harness/<n>-…
+  const found = r.stdout.split('\n').map((l) => l.split('\trefs/heads/')[1]).filter((b) => b && b.startsWith(`harness/${n}-`))
+  for (const b of found) {
+    const pr = await GH.openPrFor(b, root)
+    if (pr) return { branch: b, onRemote: true, existing: pr }
+  }
+  return { branch: found[0] || `harness/${n}-${slug(title)}`, onRemote: found.length > 0, existing: null }
 }
 
 /** The laptop workspace: a worktree per issue, reused only if it is the right one. */
@@ -171,78 +194,112 @@ async function worktreeFor(root, workdir, branch, onRemote, base) {
   if (onRemote) await must(['merge', '--ff-only', `origin/${branch}`], workdir, `git merge --ff-only origin/${branch} (the local branch has diverged from the pushed one)`)
 }
 
-// ── ship ─────────────────────────────────────────────────────────────────────
-async function ship(opt, root, config) {
-  const L = config.github.labels
-  const t = await GH.issue(opt.n, root)
-  if (t.state !== 'OPEN') return console.error(`#${opt.n} is ${t.state.toLowerCase()} — nothing to do`)
-  const base = config.base
-  await must(['fetch', 'origin', base], root, `git fetch origin ${base}`)
-  const { branch, onRemote } = await branchFor(opt.n, t.title, root)
-  const existing = await GH.openPrFor(branch, root)
-  if (existing && !existing.isDraft) return console.error(`#${opt.n} already has a ready pull request: ${existing.url}`)
-  // Claim it: the label swap is what stops a second run starting on it. A
-  // --no-publish run writes nothing to GitHub, so it does not claim.
-  if (opt.publish) await GH.relabel(opt.n, { add: [L.working], remove: [L.ready, L.stuck, L.done] }, root)
-
-  // From here on, whatever goes wrong, the ticket must not be left looking
-  // claimed: a failure is said on the issue and handed to a person.
-  const fail = async (reason) => {
-    console.error(`harness: ${reason}`)
-    process.exitCode = 1
-    if (!opt.publish) return
-    await GH.comment(opt.n, shipIssueComment({ outcome: 'error', reason }), root).catch(() => {})
-    await GH.relabel(opt.n, { add: [L.stuck], remove: [L.working] }, root).catch(() => {})
-  }
-
-  let workdir = root, result
-  try {
-    if (onRemote) await must(['fetch', 'origin', branch], root, `git fetch origin ${branch}`)
-    // In Actions the runner is the isolation; on a laptop a worktree keeps
-    // the person's own checkout untouched.
-    if (CI) await must(['checkout', '-B', branch, onRemote ? `origin/${branch}` : `origin/${base}`], root, 'git checkout')
-    else await worktreeFor(root, workdir = join(root, '.harness', 'worktrees', `issue-${opt.n}`), branch, onRemote, base)
-    if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
-
-    const dir = runDir(root, `ship-${opt.n}`)
-    result = await runCopilot(config, 'harness-ship', {
-      issue: opt.n, title: t.title, body: t.body || '', labels: t.labels, branch, base, workdir,
-      ...(opt.notes ? { notes: opt.notes } : {}), ...(opt.size ? { size: opt.size } : {}),
-    }, dir, workdir)
-    result.issue ??= opt.n
-    result.branch ??= branch
-    result.title ??= t.title
-    writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
-    console.error(`harness: ${result.outcome}${result.reason ? ` — ${result.reason}` : ''} (run folder ${dir})`)
-    if (!CI) console.error(`the worktree stays at ${workdir}; remove it with: git worktree remove ${workdir}`)
-    if (!opt.publish) return result
-    await publishShip(result, { root, workdir, base, branch, existing, config })
-    return result
-  } catch (e) {
-    await fail(e.message)
-    return result
-  }
+/** Files under .github/workflows/ that a ref changes against the base. */
+export async function workflowEdits(baseRef, ref, cwd) {
+  return (await must(['diff', '--name-only', `${baseRef}...${ref}`], cwd, 'git diff'))
+    .split('\n').filter((f) => f.startsWith('.github/workflows/'))
 }
 
-async function publishShip(result, { root, workdir, base, branch, existing, config }) {
-  const L = config.github.labels, n = result.issue
+// ── ship ─────────────────────────────────────────────────────────────────────
+async function shipPrepare(opt, root, config) {
+  const L = config.github.labels
+  const t = await GH.issue(opt.n, root)
+  const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
+  if (t.state !== 'OPEN') return skip(`#${opt.n} is ${t.state.toLowerCase()} — nothing to do`)
+  const base = config.base
+  // Locally, today's base; in Actions the checkout fetched every branch.
+  if (!CI) await must(['fetch', 'origin', base], root, `git fetch origin ${base}`)
+  const { branch, onRemote, existing } = await branchFor(opt.n, t.title, root)
+  if (existing && !existing.isDraft) return skip(`#${opt.n} already has a ready pull request: ${existing.url}`)
+  // Claim it: the label swap is what stops a second run starting on it. Add
+  // before removing, so a failure never leaves the ticket with neither. A
+  // --no-publish run writes nothing to GitHub, so it does not claim.
+  if (opt.publish) {
+    await GH.relabel(opt.n, { add: [L.working] }, root)
+    await GH.relabel(opt.n, { remove: [L.ready, L.stuck, L.done] }, root)
+  }
+  const state = { issue: { number: opt.n, title: t.title, body: t.body || '', labels: t.labels }, branch, onRemote, base, existing, notes: opt.notes, size: opt.size }
+  writeHandoff(root, opt, 'prepare', state)
+  output({ skip: 'false', branch, ref: onRemote ? branch : base })
+  return state
+}
+
+async function shipBuild(opt, root, config, state) {
+  const { branch, onRemote, base } = state
+  let workdir = root
+  if (CI) {
+    // No credentials in this job, so no fetch: the checkout brought every
+    // branch (fetch-depth: 0).
+    await must(['checkout', '-B', branch, onRemote ? `origin/${branch}` : `origin/${base}`], root, 'git checkout')
+  } else {
+    if (onRemote) await must(['fetch', 'origin', branch], root, `git fetch origin ${branch}`)
+    await worktreeFor(root, workdir = join(root, '.harness', 'worktrees', `issue-${opt.n}`), branch, onRemote, base)
+  }
+  if (onRemote) console.error(`continuing on ${branch}, from an earlier attempt`)
+  const dir = runDir(root, `ship-${opt.n}`)
+  const t = state.issue
+  const result = await runCopilot(config, 'harness-ship', {
+    issue: opt.n, title: t.title, body: t.body, labels: t.labels, branch, base, workdir,
+    ...(state.notes ? { notes: state.notes } : {}), ...(state.size ? { size: state.size } : {}),
+  }, dir, workdir)
+  result.issue ??= opt.n
+  result.branch ??= branch
+  result.title ??= t.title
+  writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
+  // In Actions the work leaves this job as a bundle, and publish pushes it:
+  // nothing in this job could.
+  let bundle = null
+  const ahead = Number((await git(['rev-list', '--count', `origin/${base}..HEAD`], { cwd: workdir })).stdout.trim() || 0)
+  if (CI && ahead > 0) {
+    bundle = `ship-${opt.n}.bundle`
+    await must(['bundle', 'create', join(harnessDir(root, 'handoff'), bundle), `refs/heads/${branch}`, `^origin/${base}`], workdir, 'git bundle create')
+  }
+  writeHandoff(root, opt, 'build', { result, workdir, bundle })
+  console.error(`harness: ${result.outcome}${result.reason ? ` — ${result.reason}` : ''} (run folder ${dir})`)
+  if (!CI) console.error(`the worktree stays at ${workdir}; remove it with: git worktree remove ${workdir}`)
+  return result
+}
+
+async function shipPublish(opt, root, config, state, built) {
+  const L = config.github.labels, n = opt.n, { base, branch, existing } = state
+  // The build job timed out, was cancelled or lost its runner: say so, so
+  // the ticket never sits claimed with nobody working on it.
+  const result = built ? built.result : { outcome: 'error', reason: 'the build job did not finish (a timeout, a cancellation or a lost runner) — its log says which' }
+  result.issue ??= n
   if (result.outcome === 'declined' || result.outcome === 'error') {
     await GH.comment(n, shipIssueComment(result), root)
     await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
-    return
+    return result
   }
-  // pr or handback: push what was built, and put it in front of a person.
-  const ahead = Number(await must(['rev-list', '--count', `origin/${base}..HEAD`], workdir, 'git rev-list'))
+  // The work to push: the worktree's HEAD on a laptop, the bundle in Actions.
+  let cwd = root, ref = null
+  if (!CI) {
+    cwd = built.workdir
+    ref = 'HEAD'
+  } else if (built.bundle) {
+    ref = 'refs/harness/out'
+    await must(['fetch', join(root, '.harness', 'handoff', built.bundle), `+refs/heads/${branch}:${ref}`], root, 'git fetch bundle')
+  }
+  const ahead = ref ? Number(await must(['rev-list', '--count', `origin/${base}..${ref}`], cwd, 'git rev-list')) : 0
   // A "pull request" with nothing in it is not one.
   if (ahead === 0 && result.outcome === 'pr') Object.assign(result, { outcome: 'handback', phase: 'PR', reason: 'the run finished with no commits to push' })
+  // A pushed workflow file runs, on that branch, with this repository's
+  // secrets. Agent-written workflows are never pushed; a person applies them.
+  const edits = ahead > 0 ? await workflowEdits(`origin/${base}`, ref, cwd) : []
+  if (edits.length) {
+    Object.assign(result, { outcome: 'handback', phase: 'PR', reason: `the change edits ${edits.join(', ')}; the harness never pushes workflow files, so a person must apply it (the run's artifact holds the commits)` })
+    await GH.comment(n, shipIssueComment(result), root)
+    await GH.relabel(n, { add: [L.stuck], remove: [L.working] }, root)
+    return result
+  }
   let url = existing ? existing.url : ''
   if (ahead > 0) {
-    await push(workdir, branch)
+    await must(['push', '-u', 'origin', `${ref}:refs/heads/${branch}`], cwd, 'git push')
     const draft = result.outcome !== 'pr'
     const body = shipPrBody(result)
     if (existing) {
-      await GH.editPr(Number(existing.url.split('/').pop()), body, root)
-      if (!draft && existing.isDraft) await GH.markReady(Number(existing.url.split('/').pop()), root)
+      await GH.editPr(existing.number, body, root)
+      if (!draft && existing.isDraft) await GH.markReady(existing.number, root)
     } else {
       url = await GH.createPr({ base, head: branch, title: shipTitle(result), body, draft }, root)
     }
@@ -260,57 +317,127 @@ async function publishShip(result, { root, workdir, base, branch, existing, conf
   }
   await GH.comment(n, shipIssueComment(result, url), root)
   await GH.relabel(n, { add: [result.outcome === 'pr' ? L.done : L.stuck], remove: [L.working] }, root)
+  return result
+}
+
+async function ship(opt, root, config) {
+  const L = config.github.labels
+  const phase = opt.phase
+  try {
+    let state = phase && phase !== 'prepare' ? readHandoff(root, opt, 'prepare') : null
+    if (!phase || phase === 'prepare') state = await shipPrepare(opt, root, config)
+    if (!state || state.skip) return
+    if (!phase || phase === 'build') {
+      await shipBuild(opt, root, config, state)
+      if (phase === 'build' || !opt.publish) return
+    }
+    await shipPublish(opt, root, config, state, readHandoff(root, opt, 'build'))
+  } catch (e) {
+    console.error(`harness: ${e.message}`)
+    process.exitCode = 1
+    // The build job has no token to report with; publish reports the
+    // missing result instead. Elsewhere, a ticket must never be left looking
+    // claimed: the failure is said on the issue and handed to a person.
+    if (phase === 'build' || !opt.publish) return
+    await GH.comment(opt.n, shipIssueComment({ outcome: 'error', reason: e.message }), root).catch(() => {})
+    await GH.relabel(opt.n, { add: [L.stuck], remove: [L.working] }, root).catch(() => {})
+  }
 }
 
 // ── review ───────────────────────────────────────────────────────────────────
-async function review(opt, root, config) {
+async function reviewPrepare(opt, root, config) {
   const p = await GH.pr(opt.n, root)
-  if (p.isDraft) return console.error(`#${opt.n} is a draft — reviewed once it is marked ready`)
-  await must(['fetch', 'origin', p.baseRefName], root, 'git fetch base')
+  const skip = (reason) => { console.error(`harness: ${reason}`); writeHandoff(root, opt, 'prepare', { skip: reason }); output({ skip: 'true' }); return null }
+  if (p.isDraft) return skip(`#${opt.n} is a draft — reviewed once it is marked ready`)
+  // Its extension would run with this repository's Copilot token.
+  if (p.isCrossRepository) return skip(`#${opt.n} comes from a fork — the harness does not run code from forks`)
+  const linked = (p.closingIssuesReferences || [])[0]
+  const t = linked ? await GH.issue(linked.number, root).catch(() => null) : null
+  const state = {
+    pr: opt.n, title: p.title, body: p.body || '', base: p.baseRefName, labels: p.labels,
+    ...(t ? { ticket: { number: t.number, title: t.title, body: t.body || '' } } : {}),
+  }
+  writeHandoff(root, opt, 'prepare', state)
+  output({ skip: 'false', ref: `refs/pull/${opt.n}/head` })
+  return state
+}
+
+async function reviewBuild(opt, root, config, state) {
   let workdir = root
   if (!CI) {
+    await must(['fetch', 'origin', state.base], root, 'git fetch base')
     workdir = join(root, '.harness', 'worktrees', `pr-${opt.n}`)
     // A named ref, not FETCH_HEAD: FETCH_HEAD belongs to one worktree, so a
     // second review could not see what the main checkout fetched.
     const ref = `refs/harness/pr-${opt.n}`
     await must(['fetch', '--force', 'origin', `pull/${opt.n}/head:${ref}`], root, 'git fetch pull request')
     await git(['worktree', 'prune'], { cwd: root })
-    if (existsSync(workdir)) await must(['checkout', '--detach', ref], workdir, 'git checkout')
-    else await must(['worktree', 'add', '--detach', workdir, ref], root, 'git worktree add')
+    if (existsSync(workdir)) {
+      // Reviewers may write scratch files; the next review must not read them.
+      await must(['reset', '--hard'], workdir, 'git reset')
+      await must(['clean', '-fdx'], workdir, 'git clean')
+      await must(['checkout', '--detach', ref], workdir, 'git checkout')
+    } else {
+      await must(['worktree', 'add', '--detach', workdir, ref], root, 'git worktree add')
+    }
   }
   // A branch from before the harness was adopted has nothing to run. The
   // review is advisory, so that is a notice, not a red check.
   if (!existsSync(join(workdir, '.github', 'extensions', 'harness', 'extension.mjs'))) {
-    return console.error(`harness: #${opt.n}'s branch does not carry the harness — skipped (merge ${p.baseRefName} into it to review)`)
+    const result = { outcome: 'skipped', reason: `the branch does not carry the harness — merge ${state.base} into it to review` }
+    writeHandoff(root, opt, 'build', { result })
+    return result
   }
-  const diff = await facts(`origin/${p.baseRefName}`, workdir, config)
-  const size = reviewSize(diff, config, { labelledFull: p.labels.includes(config.github.labels.full) })
-  const linked = (p.closingIssuesReferences || [])[0]
-  const t = linked ? await GH.issue(linked.number, root).catch(() => null) : null
-
+  const diff = await facts(`origin/${state.base}`, workdir, config)
+  const size = reviewSize(diff, config, { labelledFull: state.labels.includes(config.github.labels.full) })
   const dir = runDir(root, `review-${opt.n}`)
   const result = await runCopilot(config, 'harness-review', {
-    pr: opt.n, title: p.title, body: p.body || '', base: p.baseRefName, workdir, size,
-    ...(t ? { ticket: { number: t.number, title: t.title, body: t.body || '' } } : {}),
+    pr: opt.n, title: state.title, body: state.body, base: state.base, workdir, size,
+    ...(state.ticket ? { ticket: state.ticket } : {}),
   }, dir, workdir)
   writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2))
-  if (result.outcome === 'error') {
-    // Advisory: say so loudly in the log and the summary, but never block.
-    console.error(`::warning::harness review did not finish — ${result.reason}`)
-    if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, `Harness review did not finish: ${result.reason}\n`, { flag: 'a' })
+  writeHandoff(root, opt, 'build', { result })
+  return result
+}
+
+async function reviewPublish(opt, root, config, built) {
+  const result = built ? built.result : { outcome: 'error', reason: 'the review job did not finish' }
+  const summary = (text) => process.env.GITHUB_STEP_SUMMARY && appendFileSync(process.env.GITHUB_STEP_SUMMARY, text + '\n')
+  if (result.outcome === 'error' || result.outcome === 'skipped') {
+    // Advisory: say so in the log and the summary, but never block.
+    console.error(`${CI ? '::warning::' : ''}harness review did not run to the end — ${result.reason}`)
+    summary(`Harness review did not run to the end: ${result.reason}`)
     return result
   }
   const body = reviewComment(result)
   if (opt.publish) await GH.upsertComment(opt.n, REVIEW_MARKER, body, root)
-  if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, body + '\n', { flag: 'a' })
+  summary(body)
   console.error(`harness: review ${result.verdict} · ${result.confidence} confidence`)
   return result
 }
 
+async function review(opt, root, config) {
+  const phase = opt.phase
+  try {
+    let state = phase && phase !== 'prepare' ? readHandoff(root, opt, 'prepare') : null
+    if (!phase || phase === 'prepare') state = await reviewPrepare(opt, root, config)
+    if (!state || state.skip) return
+    if (!phase || phase === 'build') {
+      await reviewBuild(opt, root, config, state)
+      if (phase === 'build') return
+    }
+    await reviewPublish(opt, root, config, readHandoff(root, opt, 'build'))
+  } catch (e) {
+    // Advisory: a review that could not run is a warning, never a red check.
+    console.error(`${CI ? '::warning::' : ''}harness review: ${e.message}`)
+  }
+}
+
 async function main() {
   const opt = parseArgv(process.argv.slice(2))
-  if (!['ship', 'review'].includes(opt.cmd) || !Number.isInteger(opt.n) || opt.n <= 0) {
-    console.error('usage: node harness/bin/run.mjs ship <issue> [--full|--small] [--notes "…"] [--no-publish]\n       node harness/bin/run.mjs review <pr> [--no-publish]')
+  if (!['ship', 'review'].includes(opt.cmd) || !Number.isInteger(opt.n) || opt.n <= 0 || (opt.phase && !['prepare', 'build', 'publish'].includes(opt.phase))) {
+    console.error('usage: node harness/bin/run.mjs ship <issue> [--full|--small] [--notes "…"] [--no-publish] [--phase prepare|build|publish]\n' +
+      '       node harness/bin/run.mjs review <pr> [--no-publish] [--phase prepare|build|publish]')
     process.exit(2)
   }
   const root = await repoRoot()

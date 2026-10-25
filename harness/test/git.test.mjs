@@ -1,7 +1,7 @@
 // The gate and red-check against a real git repository, with shell scripts
 // standing in for Maven: proves the worktree, revert and exit-code logic.
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { after, test } from 'node:test'
 import { gate } from '../lib/gate.mjs'
 import { syncBase } from '../lib/git.mjs'
 import { redCheck } from '../lib/red-check.mjs'
+import { copilotEnv, workflowEdits } from '../bin/run.mjs'
 import { config } from './fake.mjs'
 
 const dirs = []
@@ -90,4 +91,30 @@ test('a branch that conflicts with the base reports the files and leaves no merg
   assert.equal(s.sync, 'conflict')
   assert.deepEqual(s.conflicts, ['src/main/status.sh'])
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' }), '')
+})
+
+test('workflow files the branch changes are found, so publish can refuse to push them', async () => {
+  const { dir, g } = repo()
+  mkdirSync(join(dir, '.github/workflows'), { recursive: true })
+  writeFileSync(join(dir, '.github/workflows/ci.yml'), 'on: push\n')
+  writeFileSync(join(dir, 'src/main/status.sh'), 'status() { echo 404; }\n')
+  g('add', '-A'); g('commit', '-qm', 'touch a workflow')
+  assert.deepEqual(await workflowEdits('origin/main', 'HEAD', dir), ['.github/workflows/ci.yml'])
+})
+
+test('with the agents\' environment, git hands out no stored credential', () => {
+  const { dir, g } = repo()
+  const store = join(dir, '..', `creds-${Date.now()}`)
+  writeFileSync(store, 'https://x-access-token:s3cret@github.com\n')
+  g('config', 'credential.helper', `store --file=${store}`)
+  // Only this repository's config: a real helper in the person's global or
+  // system config must never be asked, nor its answer printed by an assert.
+  const isolated = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }
+  const fill = (env) => spawnSync('git', ['credential', 'fill'], { cwd: dir, encoding: 'utf8', env, input: 'protocol=https\nhost=github.com\n\n' })
+  // Without it the stored token comes straight back: the test can see one.
+  assert.ok(fill(isolated).stdout.includes('password=s3cret'), 'the store answers without the agents\' environment')
+  const agent = fill(copilotEnv(isolated))
+  assert.ok(!agent.stdout.includes('s3cret'), 'no credential reaches the agents')
+  assert.notEqual(agent.status, 0)
+  rmSync(store, { force: true })
 })

@@ -73,6 +73,9 @@ export const DEFAULTS = {
   },
 }
 
+// The lenses harness/lib/prompts.mjs defines; extra ones come from config.lenses.
+const BUILT_IN_LENSES = { code: ['combined', 'criteria', 'rules'], spec: ['combined', 'criteria', 'fit'] }
+
 const plain = (v) => v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof RegExp)
 
 /** Deep merge: objects merge key by key; arrays, functions and regexes replace. */
@@ -92,6 +95,13 @@ export function resolveConfig(user = {}) {
     for (const k of ['think', 'build']) if (t[k] && !(t[k] in c.models)) problems.push(`a tier names model "${t[k]}", which models does not define`)
   }
   for (const l of [...c.lenses.code, ...c.lenses.spec]) if (!l.key || !l.ask) problems.push('every extra lens needs a key and an ask')
+  // A mistyped lens key would mean no auditor at all, and a run that reads
+  // as audited clean.
+  const known = { code: new Set([...BUILT_IN_LENSES.code, ...c.lenses.code.map((l) => l.key)]), spec: new Set([...BUILT_IN_LENSES.spec, ...c.lenses.spec.map((l) => l.key)]) }
+  for (const [name, t] of Object.entries(c.tiers)) {
+    for (const k of t.codeLenses || []) if (!known.code.has(k)) problems.push(`tiers.${name}.codeLenses names "${k}", which is no lens`)
+    for (const k of t.specLenses || []) if (!known.spec.has(k)) problems.push(`tiers.${name}.specLenses names "${k}", which is no lens`)
+  }
   if (problems.length) throw new Error(`harness.config.mjs: ${problems.join('; ')}`)
   return c
 }

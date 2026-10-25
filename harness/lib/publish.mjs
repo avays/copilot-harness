@@ -37,17 +37,21 @@ export function shipPrBody(r) {
     if (r.built.keyFiles && r.built.keyFiles.length) s.push(`## Start here\n\n${r.built.keyFiles.map((k) => `- \`${k.file}\` — ${k.why}`).join('\n')}`)
   }
   if (r.outcome === 'pr') {
-    const fixed = [...(r.rounds || []), ...(r.specRounds || [])].reduce((n, x) => n + (x.confirmed || 0), 0)
+    // Only audited rounds count as audit: a red gate or a conflict is the
+    // machine's catch, not the auditors'.
+    const audits = (r.rounds || []).filter((x) => x.audited)
+    const fixed = [...audits, ...(r.specRounds || [])].reduce((n, x) => n + (x.confirmed || 0), 0)
     s.push(`## Checks\n\n` + [
       `Gate green: ${r.gate.line}`,
       r.redCheck && r.redCheck.failedOnBase ? 'the new tests fail without the change' : null,
-      `independent audit: ${fixed ? `${fixed} problem${fixed === 1 ? '' : 's'} found and fixed, ` : ''}clean after ${(r.rounds || []).length} round${(r.rounds || []).length === 1 ? '' : 's'}`,
+      `independent audit: ${fixed ? `${fixed} problem${fixed === 1 ? '' : 's'} found and fixed, ` : ''}clean after ${audits.length} audit${audits.length === 1 ? '' : 's'}`,
     ].filter(Boolean).map((x) => `- ${x}`).join('\n'))
   }
   if (r.open && r.open.length) s.push(`## Still open\n\n${list(r.open)}`)
   if (r.alsoOpen && r.alsoOpen.length) s.push(`## Also unresolved\n\nNot why it stopped, but the next run must settle these too:\n\n${list(r.alsoOpen)}`)
   if (r.minors && r.minors.length) s.push(`## Notes (minor, confirmed)\n\n${list(r.minors)}`)
-  if (r.notVerified && r.notVerified.length) s.push(`## Not verified\n\n${r.notVerified.map((x) => `- ${x}`).join('\n')}`)
+  // Always present, so its absence never reads as "nothing to say".
+  s.push(`## Not verified\n\n${r.notVerified && r.notVerified.length ? r.notVerified.map((x) => `- ${x}`).join('\n') : '- Nothing beyond what the checks above cover. The gate, red-check and audits are all a run can prove; a person still judges the change.'}`)
   if (r.lessons && r.lessons.length) s.push(`## Lessons recorded\n\n${r.lessons.map((l) => `- ${l.pattern} → ${l.proposal}`).join('\n')}`)
   const table = auditTable(r)
   if (table) s.push(`<details><summary>Every audit round</summary>\n\n${table}\n\n</details>`)

@@ -65,7 +65,9 @@ export async function run(ctx, { config, deps = realDeps }) {
   const BASE = `origin/${a.base || config.base}`
   const labelledFull = (a.labels || []).includes(config.github.labels.full)
   const COMMON = P.common(config, cwd)
-  const specPath = `${config.paths.specs}/${a.issue}-${slug(a.title)}.md`
+  // From the branch, not the title: a ticket renamed between attempts
+  // continues on its old branch, and must keep its old spec.
+  const specPath = `${config.paths.specs}/${a.issue}-${(/^harness\/\d+-(.+)$/.exec(a.branch) || [])[1] || slug(a.title)}.md`
   const m = (slot) => modelFor(config, slot)
 
   const state = { issue: a.issue, branch: a.branch, title: a.title, size: null, why: '', spec: null, built: null, specRounds: [], rounds: [], minors: [], lessons: [], notVerified: [] }
@@ -75,32 +77,38 @@ export async function run(ctx, { config, deps = realDeps }) {
 
   // What the loop did not prove, said plainly on the PR and on a draft alike:
   // "not verified" is where a reviewer looks first.
-  const notVerified = () => [
+  const notVerified = (shipped) => [
     ...(!(lastRed && lastRed.checked) ? [`no red-check ran — ${(lastRed && lastRed.reason) || 'the gate never went green'}`] : []),
-    ...(lastRed && lastRed.checked && !lastRed.failedOnBase ? ['the new tests also pass without the change (judged a refactor by the skeptic)'] : []),
+    // On a pull request the skeptic refuted it; on a draft it may be the
+    // very thing still open, so it must not claim a verdict nobody gave.
+    ...(lastRed && lastRed.checked && !lastRed.failedOnBase
+      ? [shipped ? 'the new tests also pass without the change (judged a refactor by the skeptic)' : 'the new tests pass without the change']
+      : []),
   ]
 
   // What the audits kept catching is context the builder did not have. It
   // goes into the docs on this branch, so reviewers see the lesson with the
   // code. A run that could not converge is the one with the most to teach.
-  async function learn() {
-    if (learned || !config.learn.enabled || !history.length) return []
+  // Returns whether the Learn agent ran: it may have committed even if it
+  // died before answering, so the caller re-gates on "ran", not on lessons.
+  async function learn(outcome) {
+    if (learned || !config.learn.enabled || !history.length) return false
     learned = true
     ctx.phase('Learn')
     const lesson = await ctx.agent(
-      `${COMMON}\n\n${P.learnAsk(config, history, listFindings)}`,
+      `${COMMON}\n\n${P.learnAsk(config, dedupe(history), listFindings, outcome)}`,
       { label: 'learn', schema: LESSON, model: m(T ? T.think : 'standard') },
     )
     state.lessons = (lesson && Array.isArray(lesson.lessons) ? lesson.lessons : [])
-    return state.lessons
+    return true
   }
 
   // `open` is why it stopped; `alsoOpen` is still unresolved but is not the
   // reason — the next run must settle both, so the draft lists both.
   async function handBack(phase, reason, open = [], alsoOpen = []) {
     ctx.log(`handing #${a.issue} back at ${phase}: ${reason}`)
-    await learn()
-    return { outcome: 'handback', phase, reason, open, alsoOpen, ...state, notVerified: notVerified() }
+    await learn(`the run stopped at ${phase} (${reason}); some of these are still unfixed`)
+    return { outcome: 'handback', phase, reason, open, alsoOpen, ...state, notVerified: notVerified(false) }
   }
 
   // ── 1. Setup ───────────────────────────────────────────────────────────────
@@ -185,7 +193,7 @@ export async function run(ctx, { config, deps = realDeps }) {
       `${COMMON}\n\n${ticket}\n\nIndependent auditors confirmed these problems with ${spec.path}:\n\n${listFindings(replan)}\n\n` +
       `Revise the spec to resolve each one — or, if the ticket itself is wrong, record that under *Decisions*. ` +
       `A technical question the ticket does not settle is yours to decide: decide it and record it under ` +
-      `*Decisions*. Commit ("docs(spec): …").`,
+      `*Decisions*. Commit ("docs(spec): …"). Return decisions as EVERY Decision now in the spec, old and new.`,
       { label: `revise-spec#${round}`, schema: SPEC_WRITTEN, model: m(T.think) },
     )
     if (!revised) return handBack('Spec Audit', 'the spec reviser did not finish', replan)
@@ -213,6 +221,8 @@ export async function run(ctx, { config, deps = realDeps }) {
   // including the config's full-tier lenses.
   ].filter((l) => t.codeLenses.includes(l.key) || (l.tiers && l.tiers.includes(t.escalated ? 'full' : t.size)))
   let lenses = lensesFor(T)
+  // No lens is no audit, and an audit nobody ran is not a clean one.
+  if (!lenses.length) return handBack('Code Audit', `the ${T.size} tier names no code lens that exists — check tiers.${T.size}.codeLenses`)
   const streak = new Map()
   let audited = 0, redStreak = 0, gate = null, open = [], minors = []
 
@@ -236,13 +246,13 @@ export async function run(ctx, { config, deps = realDeps }) {
         evidence: `git merge ${BASE} conflicted in ${file}: the base has moved since this branch began`,
         fix: `git merge ${BASE}; resolve ${file} keeping both this branch's change and what landed; commit the merge`,
       }))
-      state.rounds.push({ round, gate: `not run — conflicts with ${BASE}`, raised: open.length, confirmed: open.length, covered: '' })
+      state.rounds.push({ round, audited: false, gate: `not run — conflicts with ${BASE}`, raised: open.length, confirmed: open.length, covered: '' })
     } else if (!gate.ok) {
       // A red round never reached an auditor, so it does not spend the audit
       // budget — but red rounds only get two extra rounds of slack.
       open = gateFindings(gate)
       if (!open.length) return handBack('Verify', 'the gate is red but names nothing to fix')
-      state.rounds.push({ round, gate: `red — ${gateLine(gate)}`, raised: open.length, confirmed: open.length, covered: '' })
+      state.rounds.push({ round, audited: false, gate: `red — ${gateLine(gate)}`, raised: open.length, confirmed: open.length, covered: '' })
       ctx.log(`build round ${round}: gate red, ${open.length} to fix`)
     } else {
       audited++
@@ -258,7 +268,7 @@ export async function run(ctx, { config, deps = realDeps }) {
       minors = raised.filter((f) => f.severity === 'minor')
       open = await confirm(raised.filter((f) => f.severity === 'blocker'), 'the change', round)
       history.push(...open)
-      state.rounds.push({ round, gate: gateLine(gate), raised: raised.length, confirmed: open.length,
+      state.rounds.push({ round, audited: true, gate: gateLine(gate), raised: raised.length, confirmed: open.length,
         covered: res.reports.map((r) => `ran ${r.ran || 'nothing'}: ${brief(r.covered)}`).join(' · ') })
       ctx.log(`build round ${round}: green, ${raised.length} raised, ${open.length} confirmed`)
       if (!open.length) {
@@ -290,13 +300,13 @@ export async function run(ctx, { config, deps = realDeps }) {
   // ── 7. Learn ───────────────────────────────────────────────────────────────
   // Learn edits docs after the last green gate: re-run it, so the pull
   // request never carries a commit nothing checked.
-  if ((await learn()).length) {
+  if (await learn('the change passed its audit; each of these was fixed')) {
     gate = await deps.gate({ config, cwd, base: BASE, signal: ctx.signal })
     if (!gate.ok) return handBack('Learn', `the gate went red after the lessons commit: ${gateLine(gate)}`, gateFindings(gate))
   }
 
   return {
-    outcome: 'pr', ...state, notVerified: notVerified(),
+    outcome: 'pr', ...state, notVerified: notVerified(true),
     gate: { line: gateLine(gate), sha: gate.sha },
     redCheck: lastRed && lastRed.checked ? { failedOnBase: lastRed.failedOnBase, tests: lastRed.tests } : null,
     doneWhen: setup.doneWhen,

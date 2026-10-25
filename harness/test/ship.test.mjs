@@ -278,3 +278,85 @@ test('a hand-back learns from what the audits confirmed, and says what was not v
   assert.equal(r.lessons.length, 1)
   assert.deepEqual(r.notVerified, ['no red-check ran — commands.testsOnly is not set'])
 })
+
+test('a draft does not claim a skeptic refuted the red-check when it did not', async () => {
+  const d = deps({ redCheck: { checked: true, failedOnBase: false, tests: ['OrderControllerTest'], reverted: ['src/main/java/Order.java'] } })
+  const r = await run(fakeCtx(SHIP_ARGS, script()), { config: config(), deps: d })
+  assert.equal(r.outcome, 'handback')
+  assert.deepEqual(r.notVerified, ['the new tests pass without the change'])
+})
+
+test('red rounds are not counted as audits in the pull request', async () => {
+  const { shipPrBody } = await import('../lib/publish.mjs')
+  const r = await run(fakeCtx(SHIP_ARGS, script()), { config: config(), deps: deps({ gates: [red(), green()] }) })
+  assert.match(shipPrBody(r), /independent audit: clean after 1 audit\b/)
+})
+
+test('learn that dies after committing still gets the gate re-run', async () => {
+  let audits = 0, gates = 0
+  const d = deps(); const g = d.gate; d.gate = async (x) => { gates++; return g(x) }
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': () => (++audits === 1 ? { ...clean, findings: [blocker()] } : clean), learn: undefined }))
+  await run(ctx, { config: config({ learn: { enabled: true } }), deps: d })
+  assert.equal(gates, 3)
+})
+
+test('a red gate after the lessons commit hands back at Learn', async () => {
+  let audits = 0
+  const ctx = fakeCtx(SHIP_ARGS, script({
+    'audit:': () => (++audits === 1 ? { ...clean, findings: [blocker()] } : clean),
+    learn: { lessons: [{ pattern: 'p', proposal: 'q' }] },
+  }))
+  const r = await run(ctx, { config: config({ learn: { enabled: true } }), deps: deps({ gates: [green(), green(), red()] }) })
+  assert.equal(r.outcome, 'handback')
+  assert.equal(r.phase, 'Learn')
+})
+
+test('learn is told whether the findings were fixed, and sees each once', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'audit:': { ...clean, findings: [blocker()] }, learn: { lessons: [] } }))
+  await run(ctx, { config: config({ learn: { enabled: true } }), deps: deps() })
+  const p = ctx.calls.find((c) => c.label === 'learn').prompt
+  assert.match(p, /still unfixed/)
+  assert.equal(p.match(/retired orders still return 200/g).length, 1)
+})
+
+test('a scope finding in the code audit hands back with the rest still listed', async () => {
+  const ctx = fakeCtx(SHIP_ARGS, script({ 'audit:': { ...clean, findings: [blocker({ category: 'scope', line: 5 }), blocker()] } }))
+  const r = await run(ctx, { config: config(), deps: deps() })
+  assert.equal(r.outcome, 'handback')
+  assert.deepEqual(r.open.map((f) => f.category), ['scope'])
+  assert.deepEqual(r.alsoOpen.map((f) => f.category), ['logic'])
+})
+
+test('every code auditor is told what scope means', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, size: 'full' }, script())
+  await run(ctx, { config: config(), deps: deps() })
+  for (const c of ctx.calls.filter((x) => x.label.startsWith('audit:'))) assert.match(c.prompt, /Use category scope only when the TICKET itself/)
+})
+
+test('the same conflict three rounds running is stuck', async () => {
+  const conflict = { sync: 'conflict', conflicts: ['pom.xml'] }
+  const r = await run(fakeCtx({ ...SHIP_ARGS, size: 'full' }, script()), { config: config(), deps: deps({ syncs: [conflict, conflict, conflict, conflict] }) })
+  assert.equal(r.outcome, 'handback')
+  assert.match(r.reason, /survived 2 fix attempts/)
+})
+
+test('a spec auditor dying twice, the reviser dying and the fixer dying each hand back', async () => {
+  const miss = blocker({ category: 'criterion-unmet', file: 'specs/7-x.md', line: 3 })
+  const a = await run(fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:fit': undefined })), { config: config(), deps: deps() })
+  assert.match(a.reason, /fit auditor could not finish/)
+  const b = await run(fakeCtx({ ...SHIP_ARGS, size: 'full' }, script({ 'spec-audit:criteria': { ...clean, findings: [miss] }, 'revise-spec': undefined })), { config: config(), deps: deps() })
+  assert.match(b.reason, /spec reviser did not finish/)
+  const c = await run(fakeCtx(SHIP_ARGS, script({ 'audit:': { ...clean, findings: [blocker()] }, 'fix#': undefined })), { config: config(), deps: deps() })
+  assert.match(c.reason, /fixer did not finish/)
+})
+
+test('a forced small run is never escalated', async () => {
+  const r = await run(fakeCtx({ ...SHIP_ARGS, size: 'small' }, script()), { config: config(), deps: deps({ facts: { files: 9, appLines: 900, risky: ['pom.xml'], onlyDocs: false } }) })
+  assert.equal(r.size, 'small')
+})
+
+test('a renamed ticket keeps the spec path of the branch it continues on', async () => {
+  const ctx = fakeCtx({ ...SHIP_ARGS, title: 'A completely new title', branch: 'harness/7-return-404-for-a-retired-order', size: 'full' }, script())
+  await run(ctx, { config: config(), deps: deps() })
+  assert.match(ctx.calls.find((c) => c.label === 'write-spec').prompt, /specs\/7-return-404-for-a-retired-order\.md/)
+})

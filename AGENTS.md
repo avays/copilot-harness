@@ -10,7 +10,11 @@ describes. This file is for an agent changing the harness here; it is not copied
   base is a command (`harness/lib/gate.mjs`, `red-check.mjs`, `git.mjs`). Don't replace one with a
   question to an agent.
 - **Nothing in a workflow talks to GitHub.** It runs inside Copilot with no token. GitHub reads and writes
-  belong in `harness/bin/run.mjs` and `harness/lib/github.mjs`.
+  belong in `harness/bin/run.mjs` and `harness/lib/github.mjs`, in its prepare and publish phases.
+- **The build phase never holds a GitHub token.** In Actions it is its own job, given only
+  `COPILOT_GITHUB_TOKEN`. An agent can read the environment of any process above it, so stripping a token
+  from Copilot's environment is not enough on its own. Don't add a step, env var or credential to the
+  build jobs, and don't let publish run code from the branch.
 - **Every `ctx.agent` call needs a unique label.** Copilot memoizes identical calls, so two calls with
   the same prompt and label share one agent. The tests check this.
 - **Schemas use Copilot's subset:** `type`, `required`, `enum`, `const`, `properties`/`items`,

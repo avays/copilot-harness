@@ -98,8 +98,10 @@ export function auditAsk({ lensAsk, specPath, gateLine, sha, carried, tampered, 
     `run a command only to prove one specific claim.\n\n` +
     (carried.length ? `The spec audit left these for the build to resolve — a blocker if any is still unresolved:\n${list(carried)}\n\n` : '') +
     (tampered.length ? `The gate flagged these test lines as removed assertions or added skips:\n${tampered.join('\n')}\n\n` : '') +
-    `Blockers only for something that would change a merge decision; everything else is minor. Change no ` +
-    `code. Empty is a good answer.`
+    `Blockers only for something that would change a merge decision; everything else is minor. Use ` +
+    `category scope only when the TICKET itself contradicts itself or cannot be built as written — that goes ` +
+    `to a person. Work the ticket did not ask for is a fixable defect: file it as criterion-unmet or rules, ` +
+    `not scope. Change no code. Empty is a good answer.`
 }
 
 export function specAuditAsk({ lensAsk, specPath }) {
@@ -129,8 +131,8 @@ export function skepticAsk({ f, where, base, specPath, list }) {
     `\n\n${list([f])}`
 }
 
-export function learnAsk(config, history, list) {
-  return `Independent audits of this branch confirmed these problems, which were then fixed:\n\n${list(history)}\n\n` +
+export function learnAsk(config, history, list, outcome) {
+  return `Independent audits of this branch confirmed these problems — ${outcome}:\n\n${list(history)}\n\n` +
     `Which of them is a class of mistake the next ticket could repeat — something the project's instructions ` +
     `did not tell the builder? For each, add one or two plain sentences to ${config.paths.lessons} (create it if ` +
     `needed): the rule, and why, in the voice of the project's docs. Skip one-off slips. Commit as ` +
