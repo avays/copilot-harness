@@ -32,6 +32,9 @@ let config = null
 try { config = await loadConfig(root); check('harness.config.mjs loads', true) } catch (e) { check('harness.config.mjs loads', false, e.message) }
 
 if (config) {
+  // Every run starts from origin/<base>; the default `main` is often wrong on a legacy repository.
+  const baseRef = run('git', ['ls-remote', '--exit-code', '--heads', 'origin', config.base], { cwd: root })
+  check(`base "${config.base}" exists on origin`, baseRef.status === 0, baseRef.status === 0 ? '' : `no branch "${config.base}" on origin — set base in harness.config.mjs`)
   const mapOk = Boolean(config.map) && !/^TODO/.test(config.map)
   check('config.map is filled in', mapOk, mapOk ? '' : config.map ? 'still the TODO placeholder' : 'empty: every agent will re-learn the repo')
   const found = config.instructions.filter((p) => existsSync(join(root, p)))

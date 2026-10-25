@@ -103,7 +103,9 @@ the same steps:
 - **A loop hands back** when a ticket contradicts itself (at once), when the same finding survives two
   attempts, or at its round limit.
 
-The spec loop runs on the strong model on every tier, with at least as many rounds as the build.
+The spec loop (auditors, skeptics and reviser) runs on the strong model on every tier, with at least as
+many rounds as the build. The one exception: a small run escalated by its diff gets more code rounds after
+its spec loop has finished.
 
 **When it hands back.** The same finding surviving two attempts, a round limit, a ticket that
 contradicts itself, or an agent that can't finish ends the run with a draft (if anything was built) and
@@ -150,7 +152,7 @@ decides how many auditors, how many rounds and which models.
 | The ticket… | Spec audit | Code audit |
 | --- | --- | --- |
 | touches nothing risky (**small**) | setup writes the spec; one combined auditor, strong model, 2 rounds | one combined auditor, standard model, 2 rounds |
-| changes an API, or is broad (3+ areas, ~7+ files) | as small | criteria and rules auditors, 3 rounds |
+| changes an API, or is broad (3+ areas, ~7+ files) | as small, but 3 rounds (as many as the build) | criteria and rules auditors, 3 rounds |
 | leaves 2+ design questions open | an extra spec round (3) | as its size |
 | changes a business rule, stored data or the harness, or is labelled `ship:full` (**full**) | its own spec writer; criteria and fit auditors, strong model, up to 4 rounds | criteria and rules auditors, strong model, up to 4 rounds |
 
@@ -175,8 +177,8 @@ might go wrong, through a bad model or a prompt-injected ticket, and limits what
 | Where agents run | a separate unprivileged `harness-agent` user, in a job of its own | as you |
 | GitHub token | none in the agents' reach; claim and publish are separate jobs | removed from their environment, but your stored credentials are readable |
 | sudo, Docker | removed and verified before agents start (fails closed) | whatever you have |
-| The harness that runs | the default branch's, never the branch's | the checkout you run from |
-| Pushing | publish pushes a bundle; never workflow files or local actions | `run.mjs` pushes; agents' git has no credential helper |
+| The harness that runs | ship: the default branch's; review: the pull request base's; never the branch's | the checkout you run from |
+| Pushing | publish pushes a bundle; never anything under `.github/workflows/` or `.github/actions/` | `run.mjs` pushes; agents' git has no credential helper |
 | Agent text on GitHub | made inert: no closing keywords, no @mentions | the same |
 
 **What an agent that went wrong can still do in Actions:**
@@ -201,15 +203,16 @@ section tells you what to do, in what order, and what to agree as a team.
 
 ### At a glance
 
-1. **Agree** the decisions in [What to decide as a team](#what-to-decide-as-a-team), which takes about
-   30 minutes.
-2. **Check** the [prerequisites](#1-prerequisites): Copilot plan, policy, a headless build.
-3. **Add** the files on a branch, with no changes to existing ones except `.gitignore`.
-4. **Point** the config at the team's existing instructions, and write down the migration decisions.
-5. **Configure** the gate, the paths and the workflow files for this build.
-6. **Set** two secrets and one repository setting.
-7. **Prove** it, cheapest first, then merge the adoption branch.
-8. **Roll out**: one small ticket, then a handful, then the team's normal flow.
+First, **agree** the decisions in [What to decide as a team](#what-to-decide-as-a-team), which takes
+about 30 minutes. Then:
+
+1. **Check** the [prerequisites](#1-prerequisites): Copilot plan, policy, a headless build.
+2. **Add** the files on a branch, with no changes to existing ones except `.gitignore`, and set `base`.
+3. **Point** the config at the team's existing instructions, and write down the migration decisions.
+4. **Configure** the gate, the paths and the workflow files for this build.
+5. **Set** two secrets and one repository setting.
+6. **Prove** it, cheapest first, then merge the adoption branch.
+7. **Roll out**: one small ticket, then a handful, then the team's normal flow.
 
 ### What you're adding
 
@@ -256,7 +259,7 @@ Agree these before the first ticket. Each one is a setting or a sentence in the 
 | --- | --- | --- |
 | Who may label `ready-for-ai`? | anyone with triage access (default) / a smaller group | GitHub roles; ticket bodies are the agents' brief, so keep this to people who'd review the result |
 | Does the harness review **every** PR, or only its own? | every ready PR (default) / harness branches only / a label | `on:` in `harness-review.yml`. Every review costs credits |
-| How do harness PRs get CI? | `HARNESS_GH_TOKEN` PAT / a person re-runs CI | §6 secrets, and the CI row above |
+| How do harness PRs get CI? | `HARNESS_GH_TOKEN` PAT / a person re-runs CI | [step 5](#5-set-the-secrets-and-settings), and the CI row above |
 | Which rules are *business rules* and which data is *stored data*? | name them | `sizing.rule`, `sizing.data` in `harness.config.mjs` |
 | What is expensive to get wrong? | migrations, security config, `persistence.xml`, shared legacy code | `paths.risky` |
 | Which migration decisions are fixed? | EJB → `@Service`, transaction semantics, JNDI → config, JAX-RS vs Spring MVC, security domains | a file listed in `instructions` |
@@ -279,6 +282,7 @@ From the team's repository root:
 
 ```bash
 git switch -c chore/adopt-copilot-harness
+# The harness repository is private: you need read access to it (or a copy the team can reach).
 git clone --depth 1 https://github.com/avays/copilot-harness /tmp/copilot-harness
 
 cp -r /tmp/copilot-harness/harness ./harness
@@ -290,6 +294,10 @@ grep -qxF '.harness/' .gitignore 2>/dev/null || echo '.harness/' >> .gitignore
 
 node harness/bin/doctor.mjs     # lists what is still to do
 ```
+
+Then set **`base`** in `harness.config.mjs` to the branch work starts from and pull requests target. It
+ships as `main`; a legacy repository is often on `master` or `develop`, and doctor fails until `base`
+names a branch that exists on `origin`.
 
 Commit that as one commit with nothing changed yet. The team's own adaptations then show up as a
 reviewable diff on top of it.
@@ -373,7 +381,7 @@ unprotected. Adapt that step if it fails; don't delete it.
 ### Merge checklist
 
 - [ ] Team decisions above agreed and recorded
-- [ ] Files added in one commit; `.harness/` ignored
+- [ ] Files added in one commit; `.harness/` ignored; `base` set to the team's base branch
 - [ ] `instructions` lists the team's own rule files, `paths.lessons` included
 - [ ] Migration decisions written into an instruction file
 - [ ] `map` filled in; no `TODO:` left in `harness.config.mjs`
@@ -442,7 +450,7 @@ config is validated on load, so a typo fails at once rather than mid-run.
 
 | Key | What it is | Guide |
 | --- | --- | --- |
-| `base` | the branch work starts from and PRs target | §1 |
+| `base` | the branch work starts from and PRs target | §2 |
 | `instructions` | the team's own rule files, read by every agent | §3 |
 | `map` | where things live, in two or three sentences | §3 |
 | `paths.source`, `tests`, `risky`, `specs`, `lessons` | prefixes from the repository root | §4 |
@@ -451,9 +459,10 @@ config is validated on load, so a typo fails at once rather than mid-run.
 | `sizing` | the team's areas, rules, data and contracts, in its own words | §5 |
 | `lenses.code`, `lenses.spec` | extra auditors (the parity lens) | §5 |
 | `models`, `tiers` | model ids per slot; per size, the rounds, lenses and slots for `spec`, `think` and `build` | §5 |
-| `review` | review depth, size thresholds, timeout | §5 |
+| `review` | review depth, size thresholds, timeout | §5 *Other keys* |
 | `github.labels`, `reviewWorkflow` | label names; the review to dispatch | §2 |
-| `copilot.allowTools`, `denyTools`, `timeoutMinutes`, `limits`, `extensionEnv` | what agents may run, and for how long | §4, §9 |
+| `copilot.allowTools`, `denyTools`, `flags`, `timeoutMinutes`, `limits`, `extensionEnv` | what agents may run, and for how long | §5 *Other keys*, §9 |
+| `paths.specs`, `learn.enabled` | where specs go; whether Learn runs | §5 *Other keys* |
 
 ---
 
@@ -468,7 +477,8 @@ measurement: no agent has run yet.
   - a skeptic per blocker;
   - a reviser per spec round and a fixer per code round;
   - up to three skeptics for the minors on the final round.
-- **A full ticket:** twenty or more.
+- **A full ticket:** at least seven (setup, spec writer, two spec auditors, implement, two code auditors),
+  and twenty or more once revisions, fixes and skeptics come in.
 - **Reviews:** one to four lenses each.
 
 The spec audit runs on the strong model on every tier, so it is the most expensive part of a small

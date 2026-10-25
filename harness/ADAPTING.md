@@ -22,6 +22,7 @@ reads them; it never replaces or restates them.
 | A build that runs **headless on a clean Ubuntu runner** | The gate runs it every round | `./mvnw -B -ntp verify` in a fresh clone |
 | Node 20+ on the runner | The harness is plain Node, with no npm dependencies | `node --version` |
 | Somewhere for **tickets** | The harness reads GitHub Issues | `gh issue list` |
+| The **base branch** named in config | `base` in `harness.config.mjs` (default `main`): the branch work starts from and PRs target. Legacy repositories are often on `master` or `develop` | doctor fails until `origin/<base>` exists |
 
 If the build needs a running JBoss or WildFly (Arquillian, for example), sort that out first. Either the
 gate runs the tests that don't need a server, or the job starts one. A gate that can't run is a ticket
@@ -250,7 +251,7 @@ of the base ref (`(base) => \`… git diff ${base}...HEAD …\``). A lens needs 
 tier's `codeLenses` / `specLenses` must list its key. Its key can't be one of the built-in lenses'
 (a code lens: `combined`, `criteria`, `rules`, `tests`; a spec lens: `combined`, `criteria`, `fit`). Its
 optional `model` is a slot (`light`, `standard`, `strong`), for code and spec lenses alike. Code lenses
-also run in **reviews**, on every pull request of their tier (`small` for every review, `full` for large
+also run in **reviews**, on every pull request of their tier (`small` for tiny and small reviews, `full` for large
 ones), people's included: write the `ask` so it makes sense there, and remember each one costs credits. The config refuses anything else, because a lens that never runs would read as a clean
 audit.
 
@@ -268,6 +269,22 @@ blocker, and every confirmed one is revised and audited again, until a round com
 finding surviving two revisions, or the tier's `specRounds`, hands the ticket back before anything is
 built. Because the spec decides what gets built, `spec` defaults to `strong` on every tier, and
 `specRounds` is at least `buildRounds`. Both must be at least 2.
+
+### Other keys
+
+| Key | What | Default |
+| --- | --- | --- |
+| `paths.specs` | where specs are written | `specs` |
+| `learn.enabled` | whether Learn turns what the audits caught into a lesson in `paths.lessons` | `true` |
+| `review.depth` | `fast` sizes reviews one step down, `thorough` always large | `normal` |
+| `review.tinyLines`, `review.smallLines` | changed lines (source and tests) up to which a review is tiny, then small | 30, 300 |
+| `review.timeoutMinutes` | the review's Copilot run; keep it below the review job's 45 | 35 |
+| `copilot.allowTools` | what agents may run. **Anything the gate, `quick` or `testsOnly` calls must be here** (`shell(./gradlew:*)`, `shell(java:*)`), or agents are denied it headless | Maven, git and read-only shell tools |
+| `copilot.denyTools` | always refused, over any allow | `git push`, `gh` |
+| `copilot.flags` | options before `workflow run` | `--experimental` |
+| `copilot.timeoutMinutes` | the whole ship run; below the build job's 120 | 100 |
+| `copilot.limits` | workflow ceilings (`maxAiCredits`, `timeoutSeconds`, `maxTotalSubagents`); set only from measured runs | none |
+| `copilot.extensionEnv` | secrets the gate needs that Copilot strips from its extension (§9) | none |
 
 **Check:** `node --test harness/test/*.test.mjs` still passes after your config changes. The tests use
 their own config, so a failure here means you've changed the harness itself.
@@ -487,6 +504,7 @@ definitions (`doctor --live` fails if registration does), and the workflow files
 
 ## Checklist
 
+- [ ] `base` names the team's base branch (§1)
 - [ ] Files copied (§2); `.harness/` ignored; the workflows' JDK, label names, gate prerequisites and
       Docker decision made (§2)
 - [ ] `instructions` lists the project's own rule files, and the migration decisions are written down (§3)
